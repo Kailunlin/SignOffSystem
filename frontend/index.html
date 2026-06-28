@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>簽核系統 SignOff</title>
+  <meta name="description" content="BOM 與物料轉移多關簽核系統，支援台北、台南、高雄三廠區，自動判斷簽核路徑。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Login Page -->
+  <div id="page-login" class="page page-fullscreen">
+    <div class="login-card">
+      <div class="login-logo">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">SignOff</span>
+      </div>
+      <h1 class="login-title">歡迎回來</h1>
+      <p class="login-subtitle">請選擇您的身分登入簽核系統</p>
+
+      <div class="quick-login-grid">
+        <button class="quick-btn" onclick="quickLogin('EMP001')" id="btn-quick-emp">
+          <span class="quick-icon">👷</span>
+          <span class="quick-label">林員工</span>
+          <span class="quick-site">台南廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('EMP-KHH')" id="btn-quick-emp-khh">
+          <span class="quick-icon">👷</span>
+          <span class="quick-label">陳員工</span>
+          <span class="quick-site">高雄廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('PM-TNN')" id="btn-quick-pm-tnn">
+          <span class="quick-icon">🏭</span>
+          <span class="quick-label">台南生產主管</span>
+          <span class="quick-site">台南廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('PM-KHH')" id="btn-quick-pm-khh">
+          <span class="quick-icon">🏭</span>
+          <span class="quick-label">高雄生產主管</span>
+          <span class="quick-site">高雄廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('WH-TNN')" id="btn-quick-wh-tnn">
+          <span class="quick-icon">📦</span>
+          <span class="quick-label">台南倉庫主管</span>
+          <span class="quick-site">台南廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('WH-KHH')" id="btn-quick-wh-khh">
+          <span class="quick-icon">🚢</span>
+          <span class="quick-label">高雄倉庫主管</span>
+          <span class="quick-site">高雄廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('GM-TNN')" id="btn-quick-gm-tnn">
+          <span class="quick-icon">🎖</span>
+          <span class="quick-label">台南廠區主管</span>
+          <span class="quick-site">台南廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('GM-KHH')" id="btn-quick-gm-khh">
+          <span class="quick-icon">🎖</span>
+          <span class="quick-label">高雄廠區主管</span>
+          <span class="quick-site">高雄廠</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('FIN-TPE')" id="btn-quick-fin">
+          <span class="quick-icon">💼</span>
+          <span class="quick-label">台北財務</span>
+          <span class="quick-site">總公司</span>
+        </button>
+        <button class="quick-btn" onclick="quickLogin('ADMIN-TPE')" id="btn-quick-admin">
+          <span class="quick-icon">💻</span>
+          <span class="quick-label">系統管理員</span>
+          <span class="quick-site">總公司</span>
+        </button>
+      </div>
+
+      <div class="divider"><span>或輸入帳號</span></div>
+
+      <form id="login-form" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label for="username-input">帳號</label>
+          <input type="text" id="username-input" placeholder="例如：EMP001" autocomplete="username" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-full" id="btn-login-submit">
+          <span>登入</span>
+          <span class="btn-arrow">→</span>
+        </button>
+      </form>
+      <p id="login-error" class="error-msg hidden"></p>
+    </div>
+  </div>
+
+  <!-- Main App Shell -->
+  <div id="app-shell" class="hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span class="logo-icon">⬡</span>
+        <span class="logo-text">SignOff</span>
+      </div>
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-page="dashboard" onclick="navigate('dashboard', this)" id="nav-dashboard">
+          <span class="nav-icon">⊞</span>
+          <span class="nav-label">儀表板</span>
+        </a>
+        <a href="#" class="nav-item" data-page="create-bom" onclick="navigate('create-bom', this)" id="nav-create-bom">
+          <span class="nav-icon">＋</span>
+          <span class="nav-label">建立 BOM</span>
+        </a>
+        <a href="#" class="nav-item" data-page="create-transfer" onclick="navigate('create-transfer', this)" id="nav-create-transfer">
+          <span class="nav-icon">⇄</span>
+          <span class="nav-label">物料轉移申請</span>
+        </a>
+        <a href="#" class="nav-item" data-page="pending" onclick="navigate('pending', this)" id="nav-pending">
+          <span class="nav-icon">⏳</span>
+          <span class="nav-label">待簽核清單</span>
+          <span class="badge" id="pending-badge" style="display:none"></span>
+        </a>
+        <a href="#" class="nav-item" data-page="search" onclick="navigate('search', this)" id="nav-search">
+          <span class="nav-icon">⌕</span>
+          <span class="nav-label">查詢與追蹤</span>
+        </a>
+      </nav>
+      <div class="sidebar-footer" style="flex-direction: column; align-items: stretch; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+          <div class="user-card">
+            <div class="user-avatar" id="sidebar-avatar">U</div>
+            <div class="user-info">
+              <div class="user-name" id="sidebar-username">使用者</div>
+              <div class="user-role" id="sidebar-role">角色</div>
+            </div>
+          </div>
+          <button class="btn-logout" onclick="logout()" id="btn-logout" title="登出">⏻</button>
+        </div>
+        <div style="display:flex;gap:4px;">
+          <button class="btn btn-sm btn-secondary" onclick="openDelegationModal()" id="btn-delegation" title="代理人設定" style="flex:1;font-size:11px;padding:4px 8px;">👤 代理</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerSlaCheck()" id="btn-sla-check" title="觸發 SLA 催辦檢查" style="flex:1;font-size:11px;padding:4px 8px;">⏰ SLA</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Toast -->
+      <div id="toast-container"></div>
+
+      <!-- Dashboard Page -->
+      <section id="page-dashboard" class="content-page">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">儀表板</h1>
+            <p class="page-subtitle" id="dashboard-greeting">早安，歡迎回來</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-primary" onclick="navigate('create-bom')" id="btn-dashboard-create-bom">＋ 建立 BOM</button>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card stat-blue" onclick="selectDashboardCategory('pending')" style="cursor:pointer; transition: opacity 0.2s;" id="card-pending">
+            <div class="stat-label">待我簽核</div>
+            <div class="stat-number" id="stat-pending">—</div>
+            <div class="stat-sub">張單據等待處理</div>
+          </div>
+          <div class="stat-card stat-green" onclick="selectDashboardCategory('approved')" style="cursor:pointer; transition: opacity 0.2s;" id="card-approved">
+            <div class="stat-label">已核准</div>
+            <div class="stat-number" id="stat-approved">—</div>
+            <div class="stat-sub">張已完成簽核</div>
+          </div>
+          <div class="stat-card stat-amber" onclick="selectDashboardCategory('draft')" style="cursor:pointer; transition: opacity 0.2s;" id="card-draft">
+            <div class="stat-label">我的草稿</div>
+            <div class="stat-number" id="stat-draft">—</div>
+            <div class="stat-sub">張待提交</div>
+          </div>
+          <div class="stat-card stat-red" onclick="selectDashboardCategory('rejected')" style="cursor:pointer; transition: opacity 0.2s;" id="card-rejected">
+            <div class="stat-label">遭駁回</div>
+            <div class="stat-number" id="stat-rejected">—</div>
+            <div class="stat-sub">張需修改重提</div>
+          </div>
+        </div>
+
+        <div class="section-header">
+          <h2 class="section-title" id="dashboard-table-title">待我簽核</h2>
+          <a href="#" onclick="navigate('search')" class="link-more">查看全部 →</a>
+        </div>
+        <div class="table-container">
+          <table class="data-table" id="dashboard-table">
+            <thead>
+              <tr>
+                <th>單據編號</th>
+                <th>類型</th>
+                <th>物料 ID</th>
+                <th>數量</th>
+                <th>狀態</th>
+                <th>建立時間</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="dashboard-table-body">
+              <tr><td colspan="7" class="empty-row">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Create BOM Page -->
+      <section id="page-create-bom" class="content-page hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">建立 BOM</h1>
+            <p class="page-subtitle">建立物料清單草稿，填寫完成後可提交簽核</p>
+          </div>
+        </div>
+        <div class="form-card">
+          <form id="bom-form" onsubmit="submitBOMForm(event)">
+            <div class="form-section-title">基本資料</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="bom-site">所屬廠區 <span class="required">*</span></label>
+                <select id="bom-site" required>
+                  <option value="">請選擇</option>
+                  <option value="TPE">總公司台北場 (TPE)</option>
+                  <option value="TNN">台南廠 (TNN)</option>
+                  <option value="KHH">高雄廠 (KHH)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="bom-product">產品 ID <span class="required">*</span></label>
+                <input type="text" id="bom-product" placeholder="例如：P001" required />
+              </div>
+            </div>
+            <div class="form-section-title">物料清單</div>
+            <div id="bom-items-container" style="display:flex; flex-direction:column; gap:10px;">
+              <div class="bom-item-row" style="display:flex; gap:10px; align-items:flex-end;">
+                <div class="form-group" style="flex:2">
+                  <label>物料 ID <span class="required">*</span></label>
+                  <input type="text" class="bom-item-material" placeholder="例如：M001" required />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label>數量 <span class="required">*</span></label>
+                  <input type="number" class="bom-item-quantity" placeholder="正整數" min="1" step="1" required />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label>狀態</label>
+                  <select class="bom-item-status">
+                    <option value="ACTIVE">啟用</option>
+                    <option value="DISABLED">停用</option>
+                  </select>
+                </div>
+                <button type="button" class="btn btn-sm btn-danger" onclick="removeBOMItem(this)" style="padding: 10px 14px;">✕</button>
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="addBOMItem()" style="margin-top:10px;">＋ 新增物料</button>
+
+            <div class="form-section-title">其他資訊</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>特殊旗標</label>
+                <div class="checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="bom-high-risk" />
+                    <span>高風險物料</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="bom-cost-impact" />
+                    <span>成本影響大</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:2">
+                <label for="bom-reason">建立原因 <span class="form-hint">(選填，最多 500 字)</span></label>
+                <textarea id="bom-reason" rows="2" maxlength="500" placeholder="請說明建立本張 BOM 的原因。"></textarea>
+              </div>
+              <div class="form-group">
+                <label for="bom-attachments">附件參考 URL</label>
+                <input type="text" id="bom-attachments" placeholder="例如：https://docs/BOM_2024.pdf" />
+              </div>
+            </div>
+            <div class="form-notice" id="bom-path-hint">
+              <span class="notice-icon">ℹ</span>
+              <span id="bom-path-text">選擇廠區後，系統將自動顯示預估的簽核路徑。</span>
+            </div>
+            <div class="form-actions">
+              <button type="submit" name="action" value="draft" class="btn btn-secondary" id="btn-bom-draft" onclick="setBOMAction('draft')">暫存草稿</button>
+              <button type="submit" name="action" value="submit" class="btn btn-primary" id="btn-bom-submit" onclick="setBOMAction('submit')">建立並提交簽核</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Create Transfer Page -->
+      <section id="page-create-transfer" class="content-page hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">物料轉移申請</h1>
+            <p class="page-subtitle">申請廠內或跨廠的物料移轉作業</p>
+          </div>
+        </div>
+        <div class="form-card">
+          <form id="transfer-form" onsubmit="submitTransferForm(event)">
+            <div class="form-section-title">來源資訊</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tr-source-site">來源廠區 <span class="required">*</span></label>
+                <select id="tr-source-site" required onchange="updateTransferHint()">
+                  <option value="">請選擇</option>
+                  <option value="TPE">總公司台北場 (TPE)</option>
+                  <option value="TNN">台南廠 (TNN)</option>
+                  <option value="KHH">高雄廠 (KHH)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="tr-from-warehouse">來源倉庫 <span class="required">*</span></label>
+                <input type="text" id="tr-from-warehouse" placeholder="例如：台南原料倉" required />
+              </div>
+            </div>
+            <div class="form-section-title">目標資訊</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tr-target-site">目標廠區 <span class="required">*</span></label>
+                <select id="tr-target-site" required onchange="updateTransferHint()">
+                  <option value="">請選擇</option>
+                  <option value="TPE">總公司台北場 (TPE)</option>
+                  <option value="TNN">台南廠 (TNN)</option>
+                  <option value="KHH">高雄廠 (KHH)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="tr-to-warehouse">目標倉庫 <span class="required">*</span></label>
+                <input type="text" id="tr-to-warehouse" placeholder="例如：高雄線邊倉" required />
+              </div>
+            </div>
+            <div class="form-section-title">物料資訊</div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tr-material">物料 ID <span class="required">*</span></label>
+                <input type="text" id="tr-material" placeholder="例如：M001" required />
+              </div>
+              <div class="form-group">
+                <label for="tr-quantity">數量 <span class="required">*</span></label>
+                <input type="number" id="tr-quantity" placeholder="正整數" min="1" step="1" required />
+                <span class="form-hint">必須為大於 0 的整數</span>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="tr-status">物料狀態</label>
+                <select id="tr-status">
+                  <option value="ACTIVE">啟用 (ACTIVE)</option>
+                  <option value="DISABLED">停用 (DISABLED)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>急件</label>
+                <div class="checkbox-group">
+                  <label class="checkbox-label">
+                    <input type="checkbox" id="tr-urgent" />
+                    <span>標記為急件，優先處理</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:2">
+                <label for="tr-reason">轉移原因 <span class="form-hint">(選填，最多 500 字)</span></label>
+                <textarea id="tr-reason" rows="2" maxlength="500" placeholder="請說明此次轉移的原因。"></textarea>
+              </div>
+            </div>
+            <div class="form-notice" id="transfer-path-hint">
+              <span class="notice-icon">ℹ</span>
+              <span id="transfer-path-text">選擇廠區後，系統將自動顯示預估的簽核路徑。</span>
+            </div>
+            <div class="form-actions">
+              <button type="submit" name="action" value="draft" class="btn btn-secondary" id="btn-tr-draft" onclick="setTransferAction('draft')">暫存草稿</button>
+              <button type="submit" name="action" value="submit" class="btn btn-primary" id="btn-tr-submit" onclick="setTransferAction('submit')">建立並提交簽核</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Pending Approvals Page -->
+      <section id="page-pending" class="content-page hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">待簽核清單</h1>
+            <p class="page-subtitle">以下是需要您處理的單據</p>
+          </div>
+          <div class="header-actions">
+            <select id="pending-type-filter" class="filter-select" onchange="loadPendingList()">
+              <option value="all">全部類型</option>
+              <option value="BOM">BOM</option>
+              <option value="MATERIAL_TRANSFER">物料轉移</option>
+            </select>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>單據編號</th>
+                <th>類型</th>
+                <th>物料 ID</th>
+                <th>數量</th>
+                <th>申請人</th>
+                <th>目前簽核關卡</th>
+                <th>狀態</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="pending-table-body">
+              <tr><td colspan="8" class="empty-row">載入中...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Search Page -->
+      <section id="page-search" class="content-page hidden">
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">查詢與追蹤</h1>
+            <p class="page-subtitle">查詢歷史單據與追蹤簽核進度</p>
+          </div>
+        </div>
+        <div class="search-bar-card">
+          <div class="search-bar-grid">
+            <div class="form-group">
+              <label for="search-type">單據類型</label>
+              <select id="search-type">
+                <option value="bom">BOM</option>
+                <option value="transfer">物料轉移</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="search-id">單據編號</label>
+              <input type="number" id="search-id" placeholder="輸入編號" min="1" />
+            </div>
+            <div class="form-group form-group-action">
+              <button class="btn btn-primary" onclick="doSearch()" id="btn-search">查詢</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>單據編號</th>
+                <th>類型</th>
+                <th>物料 ID</th>
+                <th>數量</th>
+                <th>申請人</th>
+                <th>狀態</th>
+                <th>建立時間</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="search-table-body">
+              <tr><td colspan="8" class="empty-row">請輸入查詢條件</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Document Detail Modal -->
+      <div id="detail-modal-overlay" class="modal-overlay hidden" onclick="closeDetailModal(event)">
+        <div class="modal-container" id="detail-modal">
+          <div class="modal-header">
+            <div>
+              <h2 class="modal-title" id="modal-title">單據詳情</h2>
+              <span class="modal-subtitle" id="modal-subtitle"></span>
+            </div>
+            <button class="modal-close" onclick="closeModal()" id="btn-modal-close">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="detail-meta-grid" id="detail-meta">
+              <!-- filled by JS -->
+            </div>
+
+            <!-- BOM Items Section -->
+            <div class="detail-section" id="detail-bom-items" style="display:none;">
+              <h3 class="detail-section-title">物料清單</h3>
+              <div class="table-container" style="box-shadow:none;">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>物料 ID</th>
+                      <th>數量</th>
+                      <th>狀態</th>
+                    </tr>
+                  </thead>
+                  <tbody id="detail-bom-items-table"><!-- filled by JS --></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <h3 class="detail-section-title">簽核路徑</h3>
+              <div class="approval-steps" id="detail-steps">
+                <!-- filled by JS -->
+              </div>
+            </div>
+
+            <div class="detail-section">
+              <h3 class="detail-section-title">操作紀錄</h3>
+              <div class="log-list" id="detail-logs">
+                <!-- filled by JS -->
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer" id="modal-actions">
+            <!-- filled by JS depending on state -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Modal (approve/reject with comment) -->
+      <div id="action-modal-overlay" class="modal-overlay hidden">
+        <div class="modal-container modal-small">
+          <div class="modal-header">
+            <h2 class="modal-title" id="action-modal-title">確認操作</h2>
+            <button class="modal-close" onclick="closeActionModal()" id="btn-action-modal-close">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label id="action-comment-label" for="action-comment-input">意見 (選填)</label>
+              <textarea id="action-comment-input" rows="3" placeholder="請輸入意見或原因..."></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeActionModal()" id="btn-action-cancel">取消</button>
+            <button class="btn btn-primary" id="btn-action-confirm" onclick="confirmAction()">確認</button>
+          </div>
+        </div>
+      </div>
+      <!-- Delegation Modal (SA 11.8) -->
+      <div id="delegation-modal-overlay" class="modal-overlay hidden" onclick="if(event.target===this)closeDelegationModal()">
+        <div class="modal-container modal-small">
+          <div class="modal-header">
+            <h2 class="modal-title">代理人設定</h2>
+            <button class="modal-close" onclick="closeDelegationModal()" id="btn-delegation-close">✕</button>
+          </div>
+          <div class="modal-body">
+            <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">請假期間，可將簽核權限委主由代理人代為處理。</p>
+            <div class="form-group">
+              <label for="delegation-delegate-id">代理人帳號 <span class="required">*</span></label>
+              <input type="text" id="delegation-delegate-id" placeholder="例如：EMP001" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="delegation-start">開始日期 <span class="required">*</span></label>
+                <input type="datetime-local" id="delegation-start" />
+              </div>
+              <div class="form-group">
+                <label for="delegation-end">結束日期 <span class="required">*</span></label>
+                <input type="datetime-local" id="delegation-end" />
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-danger" onclick="clearDelegation()" id="btn-delegation-clear">清除代理設定</button>
+            <button class="btn btn-primary" onclick="saveDelegation()" id="btn-delegation-save">儲存代理人</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
