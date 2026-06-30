@@ -2,7 +2,7 @@
 
 ## 1. 專案目標與範疇 (Project Objectives & Scope)
 本系統旨在建立一套支援跨廠區運作的電子簽核系統，核心處理「物料清單 (BOM) 建立/變更」與「廠內/跨廠物料轉移」之簽核工作流。
-系統需依據單據所屬廠區、物料風險屬性、成本影響、跨廠區情境等商業規則，動態判定簽核路徑（Workflow Routing）。簽核完成後，系統需透過非同步機制將單據資料 100% 正確地同步至會計系統，以落實內控制度與自動化帳務處理。
+系統需依據單據所屬廠區、物料風險屬性、成本影響、跨廠區情境等商業規則，動態判定簽核路徑（Workflow Routing）。簽核完成後，系統需透過非同步機制將「物料轉移單」同步至會計系統產生分錄，並將「BOM 單」同步至 ERP 生產模組，以落實內控制度與資料一致性。
 
 ### 1.1 廠區定義表
 系統支援以下三個核心廠區，各廠區具備不同的業務定位與權限限制：
@@ -27,7 +27,8 @@
 | **台北財務** | 總公司台北場 | 審核所有跨廠交易、成本重大變更、台北場單據，並擁有同步失敗時的手動重試權限。 | 查看、同意、駁回、手動重試同步 |
 | **系統管理員** | 總公司台北場 | 全局維護簽核引擎規則、參數設定、代理人稽核日誌與系統例外排除。 | 完整權限、手動觸發 SLA 催辦、手動重試同步 |
 | **HR 系統 (外部)** | 企業內部服務 | 提供人員職位、部門、電子郵件、直屬主管與所屬廠區之即時資料。 | API 唯讀資料來源 |
-| **會計系統 (外部)** | 企業 ERP | 接收簽核通過之最終結案單據，產生會計分錄與庫存異動憑證。 | 接收端 API |
+| **會計系統 (外部)** | 企業 ERP | 接收簽核通過之「物料轉移」結案單據，產生會計分錄與庫存異動憑證。 | 接收端 API |
+| **ERP 生產模組 (外部)** | 企業 ERP | 接收簽核通過之「BOM 單」，更新產品結構與標準成本。 | 接收端 API |
 
 ---
 
@@ -82,33 +83,9 @@
 針對物料轉移單，系統具備嚴謹的 ERP 庫存狀態防護機制，杜絕超賣與死庫問題：
 1. **預占 (Reserve)**：申請人送出單據 (`SUBMITTED`) 的瞬間，系統向 ERP 發送預占指令，鎖定該批物料數量。此時其他單據若查詢庫存，其可用庫存會自動扣除此預占量。
 2. **扣除 (Deduct)**：單據經所有關卡核准 (`APPROVED`) 時，系統向 ERP 發送正式扣除指令，實體扣除來源庫存並增加目標庫存。
-3. **釋放 (Release)**：若單據被駁回 (`REJECTED`) 或由申請人主動撤回 (`CANCELED`)，系統立即向 ERP 發送釋放指令，將該批預占的庫存退回，恢復為可用狀態。
+3. **釋放 (Release)**：若單據**已成功執行預占**，但在後續流程中遭到人工駁回 (`REJECTED`) 或由申請人主動撤回 (`CANCELED`)，系統將透過非同步佇列向 ERP 發送釋放指令，將該批預占的庫存退回，恢復為可用狀態。若釋放指令執行失敗，系統應具備自動重試機制，避免產生永久預占之死庫存。*(註：若為提交階段之系統自動防呆駁回，因尚未執行預占，則不觸發釋放動作。)*
 
-### 4.3 簽核矩陣與動態路徑規劃
 
-#### 【BOM 單簽核矩陣】
-所有 BOM 單皆由台南廠（TNN）或高雄廠（KHH）發起，第一關固定由該單據所屬廠區的「生產主管」審核。後續是否需要升級加簽，依據以下商業邏輯公式判定：
-$$needs\_extra\_review = (high\_risk == True) \lor (cost\_impact\_high == True)$$
-
-* **一般情境 (台南/高雄廠發起)**：
-    * 條件：高風險旗標與成本重大變更皆為否（`needs_extra_review == False`）。
-    * 路徑：`申請人` $\rightarrow$ `廠區生產主管` $\rightarrow$ `會計系統自動同步`
-* **高風險 / 高成本情境 (台南/高雄廠發起)**：
-    * 條件：單據被標記為高風險，或變更影響成本重大（`needs_extra_review == True`）。
-    * 路徑：`申請人` $\rightarrow$ `廠區生產主管` $\rightarrow$ `廠區主管` $\rightarrow$ `台北財務` $\rightarrow$ `會計系統自動同步`
-
-*(註：總公司台北場 TPE 因定位為管理與財務中心，系統不開放發起 BOM 單，故無 TPE 專屬之 BOM 簽核路徑。)*
-
-#### 【物料轉移單簽核矩陣】
-* **同廠區轉移** (`source_site == target_site`)：
-    * 適用：台南廠內或高雄廠內之倉庫間調撥。
-    * 路徑：`申請人` $\rightarrow$ `本廠倉庫主管` $\rightarrow$ `台北財務` $\rightarrow$ `會計系統自動同步`
-* **跨廠區轉移 (目標廠非 TPE)**：
-    * 適用：台南廠與高雄廠之間的雙向物料調撥。
-    * 路徑：`申請人` $\rightarrow$ `來源廠倉庫主管` $\rightarrow$ `目標廠倉庫主管` $\rightarrow$ `台北財務` $\rightarrow$ `會計系統自動同步`
-* **跨廠區轉移 (涉及到總公司 TPE)**：
-    * 適用：台南廠或高雄廠將物料（如樣品、待檢退貨）轉移至總公司台北場。
-    * 路徑：`申請人` $\rightarrow$ `來源廠倉庫主管` $\rightarrow$ `台北財務` $\rightarrow$ `會計系統自動同步` *(註：因 TPE 無實體生產倉儲主管，故由台北財務行行使雙重覆核職能，免加設 TPE 倉庫主管關卡)*
 
 ---
 
@@ -148,15 +125,15 @@ $$needs\_extra\_review = (high\_risk == True) \lor (cost\_impact\_high == True)$
 所有 BOM 單皆由台南廠（TNN）或高雄廠（KHH）發起，**第一關固定由該單據所屬廠區的「生產主管」**審核。後續是否需要升級加簽，依據以下商業邏輯公式判定：
 $$needs\_extra\_review = (high\_risk == True) \lor (cost\_impact\_high == True)$$
 
-- **一般情境**：若 `needs_extra_review == False`，僅需所屬廠區的生產主管審核通過，即可直接進入會計系統同步。
+- **一般情境**：若 `needs_extra_review == False`，僅需所屬廠區的生產主管審核通過，即可直接進入 ERP 系統同步。
 - **高風險 / 高成本情境**：若 `needs_extra_review == True`，系統將自動啟動進階控管，依序加簽「廠區主管（二階）」與「台北財務（三階）」進行終審。
 
 *(註：總公司台北場 TPE 因定位為營運管理與財務中心，系統從 API 限制與前端畫面上完全不開放發起 BOM 單，故無 TPE 專屬之 BOM 簽核路徑。)*
 
 | 發起廠區 | 核心條件 (Business Rules) | 具體動態簽核路徑 |
 | :--- | :--- | :--- |
-| **TNN / KHH** | 一般情境：高風險與成本重大變更皆為否 (`needs_extra_review == False`) | 廠區生產主管 $\rightarrow$ `會計系統自動同步` |
-| **TNN / KHH** | 風險情境：`high_risk == True` 或 `cost_impact_high == True` | 廠區生產主管 $\rightarrow$ 廠區主管 $\rightarrow$ 台北財務 $\rightarrow$ `會計系統自動同步` |
+| **TNN / KHH** | 一般情境：高風險與成本重大變更皆為否 (`needs_extra_review == False`) | 廠區生產主管 $\rightarrow$ `ERP 系統自動同步 (生產模組)` |
+| **TNN / KHH** | 風險情境：`high_risk == True` 或 `cost_impact_high == True` | 廠區生產主管 $\rightarrow$ 廠區主管 $\rightarrow$ 台北財務 $\rightarrow$ `ERP 系統自動同步 (生產模組)` |
 | **TPE** | 總公司台北場發起 | **不允許操作** (系統 API 直接攔截並封鎖) |
 
 ```mermaid
@@ -168,7 +145,7 @@ graph TD
     M --> E[廠區生產主管簽核]
     E -->|駁回| R
     E -->|通過| F{high_risk 或 <br>cost_impact_high == True ?}
-    F -->|否: 一般情境| H[進入 BackgroundTasks<br>非同步同步會計]
+    F -->|否: 一般情境| H[進入 BackgroundTasks<br>非同步同步 ERP]
     F -->|是: 高風險/高成本| FS[廠區主管簽核]
     FS -->|駁回| R
     FS -->|通過| G[台北財務簽核]
@@ -187,6 +164,12 @@ graph TD
 1. **第一關（核心關卡）**：不論何種調撥情境，第一關原則上固定由發起調撥的**來源廠倉庫主管**（`source_site`）進行首關審核，確認出庫合理性與在庫可用量。但若來源廠為總公司（`source_site == "TPE"`），因其無實體倉儲編制，系統自動將首關改由**台北財務**行使出庫審核職能。
 2. **跨廠區且目的地非總公司**（`source_site != target_site` 且 `target_site != "TPE"`）：若調撥涉及台南廠與高雄廠之間的實體移轉，系統將自動加簽**目標廠倉庫主管**，用以確認目的地之庫容與進庫合理性。
 3. **終審控制點**：所有物料轉移單在人工關卡的最後一關，一律必須由**台北財務**進行終審，以落實跨廠/廠內資產異動的價值覆核與會計帳務稽核。若調撥的目標廠區為 `TPE`（例如寄回總公司的樣品或待檢退貨），因 TPE 無實體倉儲編制，系統自動豁免目標廠倉庫主管，直接由台北財務行使雙重覆核職能。
+
+| 轉移情境 | 適用情境與說明 | 具體動態簽核路徑 |
+| :--- | :--- | :--- |
+| **同廠區轉移** | 台南廠內或高雄廠內之倉庫間調撥 (`source_site == target_site`) | 來源廠倉庫主管 $\rightarrow$ 台北財務 $\rightarrow$ `會計系統自動同步` |
+| **跨廠區轉移 (非 TPE)** | 台南廠與高雄廠之間的雙向物料調撥 | 來源廠倉庫主管 $\rightarrow$ 目標廠倉庫主管 $\rightarrow$ 台北財務 $\rightarrow$ `會計系統自動同步` |
+| **跨廠區轉移 (涉 TPE)** | 將物料轉移至總公司台北場 (如樣品/退貨) | 來源廠倉庫主管 $\rightarrow$ 台北財務 $\rightarrow$ `會計系統自動同步` <br>*(自動豁免目標廠關卡)* |
 
 ```mermaid
 graph TD
@@ -273,17 +256,28 @@ graph TD
 ```mermaid
 stateDiagram-v2
     [*] --> DRAFT : 建立單據 (BOM限TNN/KHH; 轉移單支援三廠)
+    DRAFT --> [*] : 申請人刪除草稿
+    
     DRAFT --> SUBMITTED : 申請人提交
-    SUBMITTED --> REJECTED : 自動防呆駁回 (如庫存不足、TPE建BOM)
+    SUBMITTED --> REJECTED : 自動防呆駁回 (如庫存不足、TPE違規建BOM)
+    SUBMITTED --> CANCELED : 申請人主動撤回 (自動檢查前/中)
+    
     SUBMITTED --> APPROVING : 自動檢查通過，動態產生簽核路徑
+    
+    APPROVING --> APPROVING : 中間關卡主管同意 (繼續流轉)
     APPROVING --> REJECTED : 任一人工關卡主管駁回
-    APPROVING --> APPROVED : 所有關卡核准通過
-    APPROVING --> CANCELED : 申請人主動撤回
-    SUBMITTED --> CANCELED : 申請人主動撤回
-    APPROVED --> CLOSED : 會計系統 API 同步成功
-    APPROVED --> SYNC_FAILED : 自動退避重試 3 次皆失敗
-    SYNC_FAILED --> CLOSED : 台北財務/管理員手動重試成功
+    APPROVING --> CANCELED : 申請人主動撤回 (簽核結束前)
+    APPROVING --> APPROVED : 所有關卡核准通過 (進入背景佇列)
+    
+    APPROVED --> CLOSED : 外部系統 (會計/ERP) 同步成功
+    APPROVED --> SYNC_FAILED : 背景退避重試 3 次皆失敗
+    
+    SYNC_FAILED --> CLOSED : 台北財務/管理員 手動重試成功
+    
     REJECTED --> DRAFT : 申請人執行「修改重提」 (重置單據歷程)
+    
+    CLOSED --> [*] : 流程案結，唯讀鎖定
+    CANCELED --> [*] : 永久作廢，僅供稽核
 ```
 
 ## 8. 資料模型與資料流
@@ -309,13 +303,13 @@ erDiagram
         string created_by "FK -> USER.id"
         string approved_by "FK -> USER.id"
         string rejection_reason
-        int sync_retries "會計同步重試次數，上限 3 次"
+        int sync_retries "外部系統同步重試次數，上限 3 次"
         datetime created_at
         datetime updated_at "最後異動時間"
         int version "樂觀鎖版本控制欄位"
     }
     BOM_DETAIL {
-        int document_id PK_FK "-> SIGNOFF_DOCUMENT.id"
+        int document_id PK "FK -> SIGNOFF_DOCUMENT.id"
         string site_code "嚴格限定 TNN（台南）或 KHH（高雄）"
         string product_id "產出產品編號，不可為空"
         boolean high_risk "高風險旗標"
@@ -331,7 +325,7 @@ erDiagram
         string material_status "建立時之物料快照狀態 (提交時必須為 ACTIVE)"
     }
     TRANSFER_DETAIL {
-        int document_id PK_FK "-> SIGNOFF_DOCUMENT.id"
+        int document_id PK "FK -> SIGNOFF_DOCUMENT.id"
         string source_site "來源廠區 (TNN | KHH | TPE)"
         string target_site "目標廠區 (TNN | KHH | TPE)"
         string from_warehouse "來源倉庫"
@@ -349,23 +343,23 @@ erDiagram
         string role "生產主管 | 倉庫主管 | 廠區主管 | 台北財務"
         string site_code "關卡所屬廠區"
         string status "PENDING | APPROVED | REJECTED"
-        string approver_id "實際簽核人 ID（可能為代理人）"
+        string approver_id "FK -> USER.id (實際簽核人 ID，可能為代理人)"
         datetime approved_at
         text comment "審核意見"
-        string delegated_from "若由代理人執行，記錄原始簽核人 ID"
+        string delegated_from "FK -> USER.id (若由代理人執行，記錄原始簽核人 ID)"
     }
     APPROVAL_LOG {
         int id PK
         int document_id FK "-> SIGNOFF_DOCUMENT.id"
         string action "SUBMIT|APPROVE|REJECT|AUTO_REJECT|CANCEL|CLOSE|REVISE|SYNC_RETRY|SYNC_FAILED|DELEGATION"
-        string actor_id "執行動作的人員 ID"
+        string actor_id "FK -> USER.id (執行動作的人員 ID)"
         text comment "操作備註或駁回原因"
         datetime created_at
     }
     DELEGATION {
         int id PK
-        string delegator_id "被代理主管 ID"
-        string delegate_id "代理人 ID"
+        string delegator_id "FK -> USER.id (被代理主管 ID)"
+        string delegate_id "FK -> USER.id (代理人 ID)"
         datetime start_at "代理啟始時間"
         datetime end_at "代理結束時間"
         datetime created_at
@@ -396,6 +390,8 @@ graph LR
 
 ### 9.1 ERP / WMS 系統 (庫存與物料主檔)
 
+**查詢 API**（即時呼叫，提交簽核時使用）：
+
 ```http
 GET /api/erp/materials/{material_id}/inventory?site={site_code}
 ```
@@ -406,6 +402,29 @@ GET /api/erp/materials/{material_id}/inventory?site={site_code}
 - 「庫存是否不足」（物料轉移時）
 
 > **現行模擬**：`MockERPService` 維護靜態物料庫存表，含以下測試物料：`M-CPU-INTEL`、`M-GPU-NVIDIA`、`M-RAM-64G`、`M-SCREW-01`、`M-PANEL-15`（均 ACTIVE）；`M-DEPRECATED`（DISABLED）。
+
+**庫存生命週期管理 API**（限物料轉移單，非同步呼叫）：
+
+| 命令 | Endpoint | 觸發時機 |
+| :--- | :--- | :--- |
+| **預占 (Reserve)** | `POST /api/erp/inventory/reserve` | 申請人成功提交，自動檢查通過後 |
+| **扣除 (Deduct)** | `POST /api/erp/inventory/deduct` | 所有人工關卡簽核全數通過 (`APPROVED`) 時 |
+| **釋放 (Release)** | `POST /api/erp/inventory/release` | 已預占的單據後續遭駁回或撤回時 |
+
+請求範例（預占/扣除/釋放共用此格式）：
+
+```json
+{
+  "document_id": "MATERIAL_TRANSFER-20260630-001",
+  "source_site": "TNN",
+  "from_warehouse": "WH-TNN-A",
+  "material_id": "M-CPU-INTEL",
+  "quantity": 150
+}
+```
+
+- **預占失敗**：若預占 API 回傳失敗（如庫存不足），系統自動觸發 `AUTO_REJECT`，單據狀態直接轉為 `REJECTED`。
+- **釋放失敗**：釋放指令透過非同步佇列執行，若失敗應具備自動重試機制，防止產生死庫存。
 
 ### 9.2 HR 系統
 
@@ -426,7 +445,7 @@ GET /api/hr/users/{user_id}
 }
 ```
 
-### 9.3 會計系統
+### 9.3 會計系統 (限物料轉移單)
 
 ```http
 POST /api/accounting/sync
@@ -440,13 +459,11 @@ POST /api/accounting/sync
   "document_type": "MATERIAL_TRANSFER",
   "source_site": "TNN",
   "target_site": "KHH",
+  "from_warehouse": "WH-TNN-A",
+  "to_warehouse": "WH-KHH-B",
+  "material_id": "M-CPU-INTEL",
+  "quantity": 150,
   "status": "APPROVED",
-  "items": [
-    {
-      "material_id": "M-CPU-INTEL",
-      "quantity": 150
-    }
-  ],
   "approved_steps": [
     "TNN_WAREHOUSE_MANAGER",
     "KHH_WAREHOUSE_MANAGER",
@@ -461,6 +478,47 @@ POST /api/accounting/sync
 
    - 失敗：若發生連線逾時或外圍系統異常，本系統單據狀態維持在 APPROVED 並自動計入重試佇列（sync_retries 遞增），直至連續失敗 3 次後強制轉為 SYNC_FAILED，解鎖人工介入按鈕。
 
+### 9.4 ERP 系統 (生產模組，限 BOM 單)
+
+```http
+POST /api/erp/bom/sync
+```
+
+針對簽核通過之 BOM 單，系統非同步呼叫此 API，將最新物料結構與標準成本更新至 ERP，但不產生會計分錄。
+
+請求範例：
+
+```json
+{
+  "transaction_id": "BOM-20260630-001",
+  "document_type": "BOM",
+  "site_code": "TNN",
+  "product_id": "PROD-A001",
+  "status": "APPROVED",
+  "high_risk": true,
+  "cost_impact_high": true,
+  "items": [
+    {
+      "material_id": "M-CPU-INTEL",
+      "quantity": 2,
+      "material_status": "ACTIVE"
+    },
+    {
+      "material_id": "M-RAM-64G",
+      "quantity": 4,
+      "material_status": "ACTIVE"
+    }
+  ],
+  "approved_steps": [
+    "TNN_PRODUCTION_MANAGER",
+    "TNN_SITE_DIRECTOR",
+    "TPE_FINANCE"
+  ]
+}
+```
+
+非同步容錯控制：連續重試失敗 3 次後，單據狀態強制轉為 `SYNC_FAILED`，解鎖台北財務與管理員的手動重試按鈕。
+
 ## 10. 通知與追蹤
 
 系統整合了多種通知管道（內部站內信 In-App Bell、Email、企業通訊軟體 Webhook），以確保簽核時效性，並防止資訊滯留。
@@ -471,12 +529,12 @@ POST /api/accounting/sync
 | :--- | :--- | :--- | :--- |
 | **單據提交** | Bell + Email <br>*(若為急件加發 Webhook)* | 下一關簽核主管 <br>*(BOM 限定 TNN/KHH 生產主管；<br>轉移單為來源廠倉庫主管)* | `【待簽核提醒】您有一筆來自 {申請人} 的 {單據類型} 待審核。廠區：{site_code}。單號：{doc_id}。` <br>*(急件將於 Teams/Slack 推播並附加一鍵審核超連結)* |
 | **簽核通過**<br>*(中間關卡)* | Bell | 下一關之待簽核主管 | `【簽核進度通知】單號 {doc_id} 已由前關主管同意，目前已送達您的待辦清單，請撥冗審核。` |
-| **簽核通過**<br>*(最終關卡)* | Bell + Email | 申請人、台北財務 | `【簽核結案通知】您申請的單據 {doc_id} 已通過最終審核，系統正非同步同步至外圍會計 ERP 中。` |
+| **簽核通過**<br>*(最終關卡)* | Bell + Email | 申請人、台北財務 | `【簽核結案通知】您申請的單據 {doc_id} 已通過最終審核，系統正非同步同步至外部系統中。` |
 | **自動防呆駁回** | Bell + Email | 申請人 | `【系統自動駁回】您提交的單據 {doc_id} 未通過自動防呆校驗。原因：{rejection_reason}。單據已退回草稿匣。` |
 | **主管人工駁回** | Bell + Email | 申請人 | `【簽核駁回通知】您的單據 {doc_id} 已被 {主管姓名}({主管職位}) 駁回。駁回原因：{comment}。請執行修改重提。` |
-| **申請人撤回** | Bell | 簽核鏈上所有相關主管 <br>*(含已簽核與當前待簽核主管)* | `【單據撤回通知】單號 {doc_id} 已由申請人主動作廢撤回，目前已從您的待辦工作台中移除，無需執行審核。` |
-| **會計同步成功** | Bell + Email | 申請人、台北財務 | `【會計同步成功】單據 {doc_id} 已順利寫入總公司 ERP。會計憑證編號：{accounting_id}，單據狀態已更新為 CLOSED。` |
-| **會計同步永久失敗** | Webhook (高優先) | 台北財務、系統管理員 | `【嚴重錯誤告警】單據 {doc_id} 連續自動重試同步 3 次皆失敗。狀態已轉為 SYNC_FAILED，請管理員立即介入排除。原因：{error_msg}。` |
+| **申請人撤回** | Bell | 申請人（撤回確認）<br>簽核鏈上所有相關主管 <br>*(含已簽核與當前待簽核主管)* | 申請人：`【撤回成功】單據 {doc_id} 已成功撤回作廢，狀態已轉為 CANCELED。` <br>主管：`【單據撤回通知】單號 {doc_id} 已由申請人主動作廢撤回，目前已從您的待辦工作台中移除，無需執行審核。` |
+| **外部系統同步成功** | Bell + Email | 申請人、台北財務 | `【同步成功】單據 {doc_id} 已順利寫入外部系統。憑證編號：{voucher_id}，單據狀態已更新為 CLOSED。` |
+| **外部系統同步永久失敗** | Webhook (高優先) | 台北財務、系統管理員 | `【嚴重錯誤告警】單據 {doc_id} 連續自動重試同步 3 次皆失敗。狀態已轉為 SYNC_FAILED，請管理員立即介入排除。原因：{error_msg}。` |
 
 ---
 
@@ -487,11 +545,11 @@ POST /api/accounting/sync
 1. **一般催辦 (SLA T1)**：
    若某張單據在某一主管的人工待辦匣中停滯超過指定時效（預設為 3 天，後端參數 `sla_days = 3`），簽核引擎將於每日凌晨自動觸發逾期催辦，同時向該名主管發送 **Email 催辦信**。
 2. **升級呈報 (Escalation T2)**：
-   若主管收到催辦後超過 5 天仍未處理，系統會將該單據標記為「嚴重逾期」，催辦權限升級（Escalation）。此時系統將繞過 Email，改以**高優先級之企業通訊軟體 Webhook**，直接在該廠區的主管群組（或對接管理員工作台）進行強制推播催辦。
+   若主管接收到 T1 催辦信後，再經過 **2 天**（即自單據進入該關卡起，總停滯滿 **5 天**）仍未處理，系統會將該單據標記為「嚴重逾期」，催辦權限升級（Escalation）。此時系統將繞過 Email，改以**高優先級之企業通訊軟體 Webhook**，直接在該廠區的主管群組（或對接管理員工作台）進行強制推播催辦。
 3. **現行手動排程觸發點**：
    目前階段系統提供特權管理端點，允許系統管理員手動呼叫執行：
 ```http
-   POST /api/admin/trigger-sla-check?sla_days=3
+POST /api/admin/trigger-sla-check?sla_days=3
 ```
 
 ## 11. 網頁功能需求
@@ -508,15 +566,17 @@ POST /api/accounting/sync
 | 已核准 | 顯示使用者自己建立且已核准（APPROVED/CLOSED）的單據 |
 | 我的草稿 | 顯示使用者自己建立的 DRAFT 單據 |
 | 遭駁回 | 顯示使用者自己建立的 REJECTED 單據 |
-| 廠區篩選 | 台北場可查看跨廠與財務相關單據；台南廠、高雄廠預設僅能查看本廠資料 |
 | 快速建立 | 提供建立 BOM、建立物料轉移的入口。*(註：若登入者廠區為 TPE，則「建立 BOM」按鈕強制置灰封鎖)* |
 
 **資料可視範圍規則**（前端 `isDocVisibleToUser`）：
 
-| 角色廠區 | BOM 可見範圍 | 物料轉移可見範圍 |
+| 角色與廠區 | BOM 可見範圍 | 物料轉移可見範圍 |
 | --- | --- | --- |
-| **TPE（台北場）** | 單據觸發 `high_risk==true` 或 `cost_impact_high==true`（即有送交台北財務終審之單據） | `source_site==TPE` 或 `target_site==TPE` 或 跨廠移轉（`source_site != target_site`） |
-| **TNN / KHH** | `site_code` 等於本廠區 | `source_site` 或 `target_site` 等於本廠區 |
+| **TPE 台北財務** | 涉及高風險/高成本之 BOM 單，**或狀態為 `SYNC_FAILED` 之單據** | `source_site==TPE` 或 `target_site==TPE` 或 跨廠移轉 |
+| **TNN / KHH 生產主管** | `site_code` 等於本廠區 | 無檢視權限 |
+| **TNN / KHH 倉庫主管** | 無檢視權限 | `source_site` 或 `target_site` 等於本廠區 |
+| **TNN / KHH 廠區主管** | `site_code` 等於本廠區 *(一般單唯讀，高風險可簽核)* | 無檢視權限 |
+| **系統管理員** | 全局可見 | 全局可見 |
 | **自己建立的單據** | 永遠可見 | 永遠可見 |
 
 頁面連動：
@@ -563,7 +623,7 @@ graph TD
 | 選擇來源廠區/倉庫 | 預設為申請人所屬廠區（支援 TNN / KHH / TPE 廠區），可選擇該廠區名下之儲位倉庫。 |
 | 選擇目標廠區/倉庫 | 由使用者選擇移入之目標。若來源與目標廠區不同，系統判定為跨廠區流程。 |
 | 填寫物料資料 | 物料 ID、數量（必須為大於 0 的正整數）、物料狀態、轉移原因、是否急件標記。 |
-| 簽核路徑預覽 | 依據「來源廠」與「目標廠」的組合，即時在 UI 預覽動態簽核路徑（同廠 vs 跨廠非 TPE vs 跨廠目標為 TPE）。） |
+| 簽核路徑預覽 | 依據「來源廠」與「目標廠」的組合，即時在 UI 預覽動態簽核路徑（同廠 vs 跨廠非 TPE vs 跨廠目標為 TPE）。 |
 | 提交簽核 | 點擊提交後將單據送出，並於背景非同步執行 ERP 實體可用庫存量校驗。 |
 
 頁面連動：
@@ -597,7 +657,7 @@ graph TD
 ```mermaid
 graph LR
     A[待簽核清單] --> B[單據詳情 Modal]
-    B -->|點擊同意| C[狀態推進: 下一關簽核主管 / <br>無下關則進入會計同步]
+    B -->|點擊同意| C[狀態推進: 下一關簽核主管 / <br>無下關則進入外部系統同步]
     B -->|點擊駁回| D[狀態轉為 REJECTED <br>退回申請人修改重提]
 ```
 
@@ -613,8 +673,9 @@ graph LR
 | 操作紀錄歷程 | 展開顯示該單據所有唯讀之 APPROVAL_LOG（含動作類型、操作人、時間、備註原因），此處資料為追加模式（Append-only）。 |
 | 同意 | 當單據處於 APPROVING 且輪到當前登入者審核時（isPendingForMe == true）顯示。點擊後扣鎖送出。|
 | 駁回 (Button) | 當 isPendingForMe == true 時顯示。點擊後彈出必填對話框，強迫輸入駁回原因。 |
+| 修改重提 (Button) | 當單據處於 REJECTED 狀態，且登入者為單據「建立人」時顯示。點擊後進入編輯模式，單據狀態重置為 DRAFT。 |
 | 撤回 (Button) | 當單據處於 SUBMITTED 或 APPROVING 狀態，且登入者為單據「建立人」時顯示。點擊後中止流程轉為 CANCELED。 |
-| 重試會計同步 | 當單據處於 SYNC_FAILED 狀態，且登入者角色為 台北財務 或 系統管理員 時顯示。點擊後觸發 Sync_Retry 背景重新同步。 |
+| 重試外部同步 | 當單據處於 SYNC_FAILED 狀態，且登入者角色為 台北財務 或 系統管理員 時顯示。點擊後觸發 Sync_Retry 背景重新同步。 |
 | 關閉 | 關閉 Modal 視窗，不影響任何狀態。 |
 
 頁面連動：
@@ -623,7 +684,7 @@ graph LR
 graph TD
     A[單據詳情 Modal] -->|主管同意| B{是否還有下一關關卡？}
     B -->|有| C[發送通知至下一關簽核主管]
-    B -->|無: 終審通過| D[進入 Celery 佇列 <br>非同步同步會計 ERP]
+    B -->|無: 終審通過| D[進入 Celery 佇列 <br>非同步同步外部系統]
     D -->|同步成功| E[狀態轉為 CLOSED <br>鎖定憑證]
     D -->|同步失敗| F[自動退避重試 3 次]
     F -->|仍失敗| SF[狀態轉為 SYNC_FAILED <br>解鎖台北財務手動重試按鈕]
@@ -690,14 +751,14 @@ graph TD
 
     Detail -->|同意| NextStep{是否還有下一關？}
     NextStep -->|有| Pending
-    NextStep -->|無: 終審通過| Accounting[進入 Celery <br>非同步會計同步]
+    NextStep -->|無: 終審通過| ExternalSync[進入 Celery <br>非同步同步外部系統]
     
-    Accounting -->|成功| Closed[CLOSED <br>結案鎖定]
-    Accounting -->|失敗: 重試 < 3 次| Retry[狀態維持 APPROVED <br>背景退避重試]
-    Retry --> Accounting
-    Accounting -->|永久失敗: 達 3 次| SyncFailed[SYNC_FAILED <br>人工介入狀態]
+    ExternalSync -->|成功| Closed[CLOSED <br>結案鎖定]
+    ExternalSync -->|失敗: 重試 < 3 次| Retry[狀態維持 APPROVED <br>背景退避重試]
+    Retry --> ExternalSync
+    ExternalSync -->|永久失敗: 達 3 次| SyncFailed[SYNC_FAILED <br>人工介入狀態]
     
-    SyncFailed -->|台北財務/管理員 <br>點擊手動重試| Accounting
+    SyncFailed -->|台北財務/管理員 <br>點擊手動重試| ExternalSync
     
     Detail -->|駁回| Rejected[REJECTED <br>記錄原因]
     Rejected -->|申請人點擊修改重提| Draft[狀態重置為 DRAFT <br>欄位解鎖編輯]
@@ -714,15 +775,15 @@ graph TD
 | **申請人** <br>`APPLICANT` | 永遠僅能查看**自身建立**（`created_by == current_user.id`）的單據，不繼承廠區大盤檢視權。 | `Create` (建立), `Update` (暫存草稿/修改重提), `Submit` (提交), `Cancel` (主動撤回) |
 | **生產主管** <br>`PRODUCTION_MANAGER` | 僅能查看與審核**所屬廠區（TNN 或 KHH）發起之 BOM 單**。不開放查看物料轉移單，亦不可查看 TPE 財務端單據。 | `Approve` (同意), `Reject` (駁回) <br>*(限該單據當前簽核步驟輪到自己時)* |
 | **倉庫主管** <br>`WAREHOUSE_MANAGER` | 僅能查看與審核**所屬廠區（TNN / KHH / TPE）**作為「來源廠 `source_site`」或「目標廠 `target_site`」之物料轉移單。不開放查看任何 BOM 單。 | `Approve` (同意), `Reject` (駁回) <br>*(限該單據當前簽核步驟輪到自己時)* |
-| **廠區主管** <br>`SITE_DIRECTOR` | 僅能查看與審核**所屬廠區（TNN 或 KHH）**觸發進階多階層加簽（`high_risk` 或 `cost_impact_high` 為真）之 **BOM 單**。不經手物料轉移單。 | `Approve` (同意), `Reject` (駁回) <br>*(限該單據當前簽核步驟輪到自己時)* |
-| **台北財務** <br>`TPE_FINANCE` | 全局跨廠區最高資產檢視權：<br>1. 所有物料轉移單（因皆含財務終審）。<br>2. 涉及 `high_risk` 或 `cost_impact_high` 之 TNN/KHH 廠區 BOM 單。 | 1. `Approve` / `Reject` (行使終審權)<br>2. **`Sync_Retry` (手動重試會計同步)** <br>*(限單據狀態處於 `SYNC_FAILED` 時)* |
+| **廠區主管** <br>`SITE_DIRECTOR` | 可查看**所屬廠區（TNN 或 KHH）發起之所有 BOM 單**。若觸發進階加簽（`high_risk` 或 `cost_impact_high` 為真），則具備簽核權限。不經手物料轉移單。 | `Approve` (同意), `Reject` (駁回) <br>*(限該單據當前簽核步驟輪到自己時)* |
+| **台北財務** <br>`TPE_FINANCE` | 全局跨廠區最高資產檢視權：<br>1. 所有物料轉移單（因皆含財務終審）。<br>2. 涉及 `high_risk` 或 `cost_impact_high` 之 TNN/KHH 廠區 BOM 單。<br>3. **任何處於 `SYNC_FAILED` 狀態之單據**。 | 1. `Approve` / `Reject` (行使終審權)<br>2. **`Sync_Retry` (手動重試外部同步)** <br>*(限單據狀態處於 `SYNC_FAILED` 時)* |
 | **代理人 (動態)** <br>`DELEGATED_APPROVER` | 於有效代理區間內（`start_at <= now <= end_at`），**暫時繼承「被代理主管」**所屬該筆單據的簽核與檢視權限。 | 繼承被代理人之 `Approve` 與 `Reject` 權限。*(系統將自動加掛 `delegated_from` 審計標籤，且不具備該主管的個人設定權)* |
-| **系統管理員** <br>`SYS_ADMIN` | **不限廠區、不限類型之全局唯讀稽核權**。除測試外，常態下不參與日常業務之「同意/駁回」簽核。 | 1. `Sync_Retry` (手動重試會計同步)<br>2. `Trigger_SLA` (手動觸發 SLA 批次催辦)<br>3. 系統組態設定、維護 `DELEGATION` 表 |
+| **系統管理員** <br>`SYS_ADMIN` | **不限廠區、不限類型之全局唯讀稽核權**。除測試外，常態下不參與日常業務之「同意/駁回」簽核。 | 1. `Sync_Retry` (手動重試外部同步)<br>2. `Trigger_SLA` (手動觸發 SLA 批次催辦)<br>3. 系統組態設定、維護 `DELEGATION` 表 |
 
 ### 13.1 代理權限特別約束
 
 1. **禁止階層循環代理**：A 主管設定 B 為代理人時，系統必須檢查 B 目前的代理人是否為 A，若是則阻斷，防止簽核權限陷入無限死循環。
-2. **動態稽核軌跡**：代理人執行 `Approve` 或 `Reject` 時，寫入 `APPROVAL_STEP` 的 `approver_id` 為代理人 UID，但 `delegated_from` 欄位必須寫入原主管 UID，提供外圍會計稽核與不可篡改性證明。
+2. **動態稽核軌跡**：代理人執行 `Approve` 或 `Reject` 時，寫入 `APPROVAL_STEP` 的 `approver_id` 為代理人 UID，但 `delegated_from` 欄位必須寫入原主管 UID，提供外部稽核與不可篡改性證明。
 
 ### 14. 稽核紀錄 (Audit Logging Service)
 
@@ -746,11 +807,11 @@ graph TD
 | **SUBMIT** | 申請人於網頁點擊「提交簽核」。 | 代表工作流（Workflow）正式啟動。 |
 | **APPROVE** | 簽核人（或代理人）執行「同意」操作。 | **審計約束**：若此步驟由代理人執行，`comment` 欄位必須自動由系統前綴加註 `[由代理人代簽，原始簽核主管: {delegator_id}]` 之防弊標籤。 |
 | **REJECT** | 簽核人（或代理人）執行「駁回」操作。 | `comment` 欄位為強制必填，內容為審查退回之具體原因。 |
-| **AUTO_REJECT** | 系統於背景自動檢查失敗（如庫存不足、物料停用、或 TPE 違規發起 BOM）執行強制攔截。 | `comment` 欄位將自動寫入外圍 ERP/WMS 回傳之錯誤代碼與阻斷理由。 |
+| **AUTO_REJECT** | 系統於背景自動檢查失敗（如庫存不足、物料停用、或 TPE 違規發起 BOM）執行強制攔截。 | `comment` 欄位將自動寫入外部系統回傳之錯誤代碼與阻斷理由。 |
 | **CANCEL** | 申請人於結案前執行「撤回」操作。 | 系統中斷工作流，並記錄撤回日誌。 |
-| **CLOSE** | 會計系統同步成功，單據正式案結。 | `comment` 欄位必須自動寫入會計系統回傳之「外圍財務憑證編號（Accounting Voucher ID）」。 |
+| **CLOSE** | 外部系統同步成功，單據正式案結。 | `comment` 欄位必須自動寫入外部系統回傳之「憑證編號（Voucher ID）」。 |
 | **REVISE** | 申請人針對遭駁回的單據點擊「修改重提」。 | 此動作將使單據重置，解鎖表單並回到 DRAFT 狀態。 |
-| **SYNC_RETRY** | 系統背景自動重試，或由台北財務/管理員點擊「手動強制重試」。 | 記錄每一次向會計系統重新遞送（Re-dispatch）資料的歷程。若手動重試成功，後續將自動追加產生一筆 `CLOSE` 紀錄。 |
+| **SYNC_RETRY** | 系統背景自動重試，或由台北財務/管理員點擊「手動強制重試」。 | 記錄每一次向外部系統重新遞送（Re-dispatch）資料的歷程。若手動重試成功，後續將自動追加產生一筆 `CLOSE` 紀錄。 |
 | **SYNC_FAILED** | Celery 背景自動重試滿 3 次皆宣告失敗。 | 標記此單據正式陷入永久失敗，`comment` 內將記錄最後一次連線逾時或 API 回傳之 Error Body，以供管理員 debug。 |
 | **DELEGATION** | 主管於「個人設定頁」中成功建立、修改或手動清除代理人設定。 | 用以追蹤組織內部簽核權限的移轉配置歷史，確保代理行為具備前置合規依據。 |
 
@@ -762,7 +823,7 @@ graph TD
 | :--- | :--- | :--- |
 | **HR 系統查無簽核人職位** <br>*(如該廠區生產主管暫時懸缺)* | 系統無法動態建立簽核關卡。為防範工作流死鎖（Deadlock），背景引擎將**強制觸發自動駁回**。於 `comment` 記錄「HR 組織架構異常：查無指定職位」，並同步發送高優先級 Bell 通知系統管理員手動介入維護。 | 狀態轉為 **`REJECTED`** <br>*(退回草稿匣，供修復後重提)* |
 | **找不到對應廠區最高主管** <br>*(BOM 觸發高風險加簽時)* | 處理機制同上。系統立即執行強制攔截，**拒絕讓單據懸空掛載**。自動駁回該單據，並同步發信給台北場系統管理員，要求進行 HR 權限矩陣校正。 | 狀態轉為 **`REJECTED`** |
-| **會計系統非同步同步失敗** | 1. 單據狀態維持鎖定，**不開放任何一般人工作權限**。<br>2. 自動進入 Celery 重試佇列，計數器 `sync_retries` 遞增，並執行 3 次指數退避重試。<br>3. 若 3 次重試均失敗，**強制轉為 `SYNC_FAILED`**，解鎖台北財務與管理員的「手動強制重試（`Sync_Retry`）」按鈕。*(註：基於財務帳務稽核一致性，此狀態下不開放手動終止或作廢功能)* | 狀態轉為 **`SYNC_FAILED`** <br>*(重試成功後方能轉為 `CLOSED`)* |
+| **外部系統非同步同步失敗** | 1. 單據狀態維持鎖定，**不開放任何一般人工作權限**。<br>2. 自動進入 Celery 重試佇列，計數器 `sync_retries` 遞增，並執行 3 次指數退避重試。<br>3. 若 3 次重試均失敗，**強制轉為 `SYNC_FAILED`**，解鎖台北財務與管理員的「手動強制重試（`Sync_Retry`）」按鈕。*(註：基於資料稽核一致性，此狀態下不開放手動終止或作廢功能)* | 狀態轉為 **`SYNC_FAILED`** <br>*(重試成功後方能轉為 `CLOSED`)* |
 | **原簽核主管於簽核中離職/停用**| 簽核引擎於每日 SLA 掃描或主管點擊時重新驗證 UID。若發現該主管已於 HR 系統停用：<br>1. 系統自動查詢該主管是否配置處於有效期間內的「代理人」。<br>2. 若有代理人，自動將簽核權動態轉移給代理人。<br>3. 若無配置代理人，則工作流暫時掛起，發信告警管理員手動至後台變更該關卡的實際簽核人（`approver_id`）。| 狀態維持 **`APPROVING`** <br>*(由代理人或管理員介入接管)* |
 | **物料轉移跨廠區其中一方駁回** | 不論是來源廠倉庫主管、目標廠倉庫主管或台北財務，人工關卡只要有任一方點擊「駁回」，工作流即刻宣告中止。系統發送通知給申請人，並要求必須執行「修改重提」以重置流程。 | 狀態轉為 **`REJECTED`** |
 | **資料庫樂觀鎖衝突 (Concurrency)** | 當兩位主管同時對同一張單據點擊「同意」，或是申請人執行「撤回」與主管審核併發時：後端校驗 `version` 欄位失敗，拋出衝突異常。系統自動回滾該筆交易（Rollback），前端彈出 HTTP 409 錯誤提示：`「此單據剛剛已被其他使用者更新，請重新整理頁面。」` | 狀態維持在**衝突前的合法狀態** <br>*(強制使用者刷新畫面上岸)* |
@@ -776,10 +837,10 @@ graph TD
 ### 16.1 後端核心技術棧與版控 (Tech Stack)
 
 為確保開發品質與系統維護性，後端實作需嚴格遵循以下技術組態：
-1. **開發框架**：採用 `FastAPI (Python 3.10+)`。全面採用 Python 內置之 Asyncio 機制處理高併發之 I/O 密集型請求（如呼叫外部 HR 或 ERP 系統）。
-2. **ORM 實體映射**：採用 `SQLAlchemy 2.0+`。
-   - **樂觀鎖實作**：必須啟用內置之 `version_id_col` 對接 `SIGNOFF_DOCUMENT.version` 欄位。當發生併發衝突時，後端必須精準捕捉 `sqlalchemy.orm.exc.StaleDataError`，並統一封裝為 `DatabaseConcurrencyException` 向前端拋出 HTTP 409（Conflict）。
-3. **非同步任務引擎**：採用 `FastAPI BackgroundTasks`。用以執行會計系統非同步同步，確保 API 操作不阻塞。
+1. **開發框架**：採用 `Django 4.2+ (Python 3.10+)` 搭配 `Django REST Framework (DRF)` 構建 RESTful API 端點，發揮其成熟的 RBAC 權限管理與資料校驗優勢。
+2. **ORM 實體映射**：採用原生的 `Django ORM`。
+   - **樂觀鎖實作**：於 `SIGNOFF_DOCUMENT` 模型中維護整數型態的 `version` 欄位。進行單據審核與更新時，後端必須基於 `id` 與 `version` 作為複合條件進行更新，若查詢更新之影響行數為 0，則判定為併發衝突，並向前端拋出 HTTP 409（Conflict）錯誤。
+3. **非同步任務引擎**：全面採用 `Celery` 搭配對應的 Message Broker（如 Redis）。用以負責執行外部系統非同步同步、重試退避策略，以及每日 SLA 逾期催辦排程，確保主要 API 的回應不被阻塞。
 
 ### 16.2 身分驗證與授權機制深度防禦 (SSO & Security)
 
@@ -827,7 +888,7 @@ graph TD
 | **POST** | `/api/documents/{id}/reject` | 當前步驟簽核主管（或有效代理人）執行「核准駁回」。 | 限目前待辦主管。Payload 之 comment 原因為必填。 |
 | **POST** | `/api/documents/{id}/cancel` | 申請人於主管審畢前，主動作廢並「撤回」工作流。 | 限建立人操作。狀態：APPROVING -> CANCELED |
 | **POST** | `/api/documents/{id}/revise` | 申請人針對被駁回單據點擊「修改重提」，重置路徑。| 限建立人操作。狀態：REJECTED -> DRAFT（欄位解鎖） |
-| **POST** | `/api/documents/{id}/retry-sync`| 手動強制重新向會計系統發起非同步同步（Sync_Retry）。| 限台北財務或系統管理員。狀態必須為 SYNC_FAILED |
+| **POST** | `/api/documents/{id}/retry-sync`| 手動強制重新向外部系統發起非同步同步（Sync_Retry）。| 限台北財務或系統管理員。狀態必須為 SYNC_FAILED |
 
 ### 17.4 系統基礎設施與行政管理端點
 
@@ -838,4 +899,4 @@ graph TD
 | **POST** | `/api/users/me/delegation`| 主管自主規劃與維護自身的「動態代理人機制」。 | Payload 含 `delegate_id`, `start_at`, `end_at` |
 | **DELETE** | `/api/users/me/delegation`| 主管提前「手動清除」或撤銷目前的代理人設定。 | 清除後立即收回代理人之待辦繼承權 |
 | **POST** | `/api/admin/trigger-sla-check`| 手動特權觸發 SLA 停滯排程掃描（預設 `?sla_days=3`）。 | **嚴格限系統管理員與台北場管理角色** |
-| **GET** | `/api/admin/accounting/sync-errors`| 查詢目前卡在 `SYNC_FAILED` 的異常單據與 Exception 堆疊歷程。| **限台北財務與系統管理員**稽核 debug 使用 |
+| **GET** | `/api/admin/external/sync-errors`| 查詢目前卡在 `SYNC_FAILED` 的異常單據與 Exception 堆疊歷程。| **限台北財務與系統管理員**稽核 debug 使用 |

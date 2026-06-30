@@ -1,35 +1,36 @@
 # 系統設計 (SD) 規格書：三廠區物流暨物料簽核系統
 
-本系統設計規格書基於最新的系統分析 (SA) 文件撰寫，旨在指導後續的開發實作。全案將採取**測試導向開發 (TDD)** 流程，並採用 **Django + FastAPI 的微服務解耦 (Microservices)** 架構進行建置。
+本系統設計規格書基於最新的系統分析 (SA) 文件撰寫，旨在指導後續的開發實作。全案將採取**測試導向開發 (TDD)** 流程，並採用 **Django 4.2+ 搭配 Django REST Framework (DRF)** 進行建置。
 
 ---
 
-## 1. 系統架構設計 (Microservices Architecture)
+## 1. 系統架構設計 (System Architecture)
 
-本系統採前後端分離與後端微服務解耦架構，將系統職責劃分為「管理與數據層」與「高併發業務 API 層」。
+本系統採前後端分離架構，後端採用 Django 生態系，並搭配 Celery 負責非同步任務與排程，提供穩健的業務邏輯處理與強大的 RBAC 權限控管能力。
 
 ```mermaid
 graph TB
     Client[前端 SPA / UI] --> Gateway[API Gateway / Nginx]
-    Gateway --> |/admin, /static| Django[Admin & DB Service <br>Django]
-    Gateway --> |/api| FastAPI[API Service <br>FastAPI]
+    Gateway --> |/api, /admin| Django[Backend API Service <br>Django + DRF]
     
-    Django --> |Migrations, ORM Sync| DB[(PostgreSQL)]
-    FastAPI --> |即時查詢庫存/組織| ERP[ERP & HR Mock Services]
-    FastAPI --> |BackgroundTasks| ACC[Accounting Service]
-    ACC --> |非同步同步| ERP
-    ACC --> |DB 更新| DB
+    Django --> |ORM| DB[(PostgreSQL / MySQL)]
+    Django --> |即時查詢庫存/組織| ERP[外部 ERP & HR 服務]
+    Django --> |發送非同步任務| Broker[(Redis / RabbitMQ)]
+    
+    Broker --> Celery[Celery Worker]
+    Celery --> |非同步同步| ERP
+    Celery --> |非同步更新狀態| DB
 ```
 
-### 1.1 服務權責劃分
-*   **Admin & DB Service (Django)**：
-    *   負責穩健的資料庫遷移 (Migrations)、Schema 管理。
-    *   利用 Django Admin 提供強大的後台管理介面，供系統管理員維護基礎設定檔（如：廠區資料、預設權限）。
-*   **API Service (FastAPI)**：
-    *   負責所有面向前端的非同步 RESTful API (`/api/v1/...`)。
+### 1.1 核心元件權責劃分
+*   **Django & DRF (API Service)**：
+    *   負責所有面向前端的 RESTful API 端點與資料校驗。
+    *   利用 Django Admin 提供強大的後台管理介面，供系統管理員維護基礎設定檔（如：代理人設定）。
     *   管理簽核狀態機 (State Machine) 流轉。
-    *   與外部 ERP / HR 系統進行 API 請求對接。
-    *   負責會計系統的非同步同步，透過 FastAPI 內建的 `BackgroundTasks` 執行。
+    *   透過 Django ORM 提供併發更新保護（樂觀鎖）。
+*   **Celery Worker (非同步任務引擎)**：
+    *   負責外部系統（ERP/會計）的非同步資料同步與退避重試。
+    *   負責每日 SLA 逾期掃描與催辦通知推播。
 
 ---
 
@@ -39,30 +40,30 @@ graph TB
 
 ### 2.1 測試技術棧
 *   **核心框架**：`pytest`
-*   **Django 測試**：`pytest-django`（處理 ORM 與 Migrations 測試）
-*   **FastAPI 測試**：`pytest-asyncio`、`httpx`（處理 Async API 整合測試）
-*   **Mocking**：使用 `unittest.mock` 模擬外部 ERP/HR API 與會計系統連線。
+*   **Django 整合測試**：`pytest-django`（負責處理 DB Transactions 與 ORM 測試）
+*   **API 測試**：`REST Framework APIClient`（模擬前端發送的 HTTP 請求）
+*   **Mocking**：使用 `unittest.mock` 與 `pytest-mock` 模擬外部 ERP/HR API 與外部系統連線。
 
 ### 2.2 開發循環規範 (Red -> Green -> Refactor)
 1.  **測試先行 (Red)**：在實作任何 API 之前，先撰寫會失敗的測試案例。
     *   *範例*：撰寫 `test_tpe_cannot_create_bom`，預期回傳 HTTP 400。
-2.  **實作代碼 (Green)**：撰寫 FastAPI 路由與 Service 層邏輯，讓測試轉綠。
+2.  **實作代碼 (Green)**：撰寫 DRF Views/Serializers 與 Service 層邏輯，讓測試轉綠。
 3.  **重構 (Refactor)**：優化程式碼，確保符合 PEP 8 規範且 Test Coverage 達到 80% 以上。
 
 ### 2.3 測試覆蓋重點
 *   **權限與邊界測試**：驗證 `isDocVisibleToUser` 與不同角色調用 API 的 HTTP 403 阻斷。
 *   **狀態機移轉測試**：測試從 `DRAFT` 到 `CLOSED` 或 `CANCELED` 的非法狀態移轉阻擋。
-*   **併發測試 (Concurrency)**：利用 `asyncio.gather` 同時發送多個 `approve` 請求，驗證樂觀鎖 (`version`) 是否能正確拋出 HTTP 409 Conflict。
+*   **併發測試 (Concurrency)**：利用多執行緒或特定測試工具模擬多位使用者同時發送 `approve` 請求，驗證樂觀鎖 (`version`) 是否能正確拋出 HTTP 409 Conflict。
 
 ---
 
 ## 3. 資料庫結構 (Table Schema)
 
-基於 Django Models 生成的資料表結構，FastAPI 則透過非同步 ORM (如 SQLAlchemy 2.0 Async 或 SQLModel) 反向對接相同的 Table。
+透過原生的 Django ORM 建立，並由 Django Migrations 全權管理資料庫版本。
 
 ### 3.1 基礎設定表
 
-**users (使用者表 - 模擬自 HR 系統)**
+**users (使用者表 - 同步自 HR 系統)**
 | 欄位 | 型別 | 約束 | 描述 |
 | :--- | :--- | :--- | :--- |
 | `id` | integer | PK | 主鍵 |
@@ -91,7 +92,7 @@ graph TB
 | `status` | varchar(20) | NOT NULL | DRAFT/SUBMITTED/APPROVING/APPROVED/REJECTED/CLOSED/CANCELED/SYNC_FAILED |
 | `created_by` | varchar(50) | FK(users.user_id) | 發起人 |
 | `version` | integer | NOT NULL, DEFAULT 1 | 樂觀鎖版本號 (Concurrency Control) |
-| `sync_retries`| integer | NOT NULL, DEFAULT 0 | 會計同步重試次數 |
+| `sync_retries`| integer | NOT NULL, DEFAULT 0 | 外部同步重試次數 |
 | `created_at` | datetime | NOT NULL, auto_now_add | 建立時間 |
 | `updated_at` | datetime | NOT NULL, auto_now | 最後更新時間 |
 
@@ -155,7 +156,7 @@ graph TB
 
 ## 4. 狀態機與流程控制 (State Machine)
 
-狀態機引擎實作於 FastAPI 服務層中。任何狀態移轉前，系統將核對前置狀態是否合法，並利用資料庫樂觀鎖進行防護。
+狀態機引擎實作於 Django 服務層 (Service Layer) 中。任何狀態移轉前，系統將核對前置狀態是否合法，並利用 Django ORM 樂觀鎖機制進行防護。
 
 ```mermaid
 stateDiagram-v2
@@ -177,39 +178,39 @@ stateDiagram-v2
 
 ---
 
-## 5. API 路由設計 (FastAPI Endpoints)
+## 5. API 路由設計 (DRF Endpoints)
 
-所有 API 端點皆位於 FastAPI 服務，並受 JWT Middleware 保護，進行 RBAC/ABAC 檢核。
+所有 API 端點皆透過 Django REST Framework (ViewSets / APIViews) 實作，並受 JWT 驗證與 Permissions 模組保護，進行 RBAC/ABAC 檢核。
 
 ### 5.1 文件查詢與建立
-*   `GET /api/boms` - 分頁查詢 BOM (自動過濾權限範圍)
-*   `POST /api/boms` - 建立 BOM 單據草稿
-*   `GET /api/boms/{id}` - 取得 BOM 單據詳情
-*   `PUT /api/boms/{id}` - 更新草稿
-*   `GET /api/transfers` - 分頁查詢轉移單
-*   `POST /api/transfers` - 建立轉移單草稿
-*   `GET /api/transfers/{id}` - 取得轉移單詳情
-*   `PUT /api/transfers/{id}` - 更新草稿
+*   `GET /api/boms/` - 分頁查詢 BOM (自動過濾權限範圍)
+*   `POST /api/boms/` - 建立 BOM 單據草稿
+*   `GET /api/boms/{id}/` - 取得 BOM 單據詳情
+*   `PUT /api/boms/{id}/` - 更新草稿
+*   `GET /api/transfers/` - 分頁查詢轉移單
+*   `POST /api/transfers/` - 建立轉移單草稿
+*   `GET /api/transfers/{id}/` - 取得轉移單詳情
+*   `PUT /api/transfers/{id}/` - 更新草稿
 
 ### 5.2 核心工作流端點
-*   `POST /api/documents/{id}/submit` - 提交簽核，執行 ERP 預占 (Reserve) 並建立 `approval_steps`
-*   `POST /api/documents/{id}/approve` - 同意簽核，最後一關核准時執行 ERP 扣除 (Deduct) 並排入 `BackgroundTasks`
-*   `POST /api/documents/{id}/reject` - 主管駁回 (需 `comment`)
-*   `POST /api/documents/{id}/cancel` - 申請人撤回，釋放 ERP 預占庫存 (Release)
-*   `POST /api/documents/{id}/revise` - 申請人修改重提 (重置狀態為 DRAFT)
-*   `POST /api/documents/{id}/retry-sync` - 手動觸發會計同步 (限 SYNC_FAILED)
+*   `POST /api/documents/{id}/submit/` - 提交簽核，執行 ERP 預占 (Reserve) 並建立 `approval_steps`
+*   `POST /api/documents/{id}/approve/` - 同意簽核，最後一關核准時執行 ERP 扣除 (Deduct) 並排入 `Celery` 佇列
+*   `POST /api/documents/{id}/reject/` - 主管駁回 (需 `comment`)
+*   `POST /api/documents/{id}/cancel/` - 申請人撤回，釋放 ERP 預占庫存 (Release)
+*   `POST /api/documents/{id}/revise/` - 申請人修改重提 (重置狀態為 DRAFT)
+*   `POST /api/documents/{id}/retry-sync/` - 手動觸發外部系統同步 (限 SYNC_FAILED)
 
 ### 5.3 其他附屬端點
-*   `GET /api/documents/{id}/logs` - 取得指定單據的 `approval_logs`
-*   `POST /api/users/me/delegation` - 設定個人代理人
-*   `DELETE /api/users/me/delegation` - 移除個人代理人
-*   `POST /api/admin/trigger-sla-check` - 觸發 SLA 催辦掃描
+*   `GET /api/documents/{id}/logs/` - 取得指定單據的 `approval_logs`
+*   `POST /api/users/me/delegation/` - 設定個人代理人
+*   `DELETE /api/users/me/delegation/` - 移除個人代理人
+*   `POST /api/admin/trigger-sla-check/` - 觸發 SLA 催辦掃描
 
 ---
 
 ## 6. 核心業務邏輯與服務層設計 (Service Layer)
 
-為了達到高可測試性 (TDD)，FastAPI 內部的服務邏輯應將「資料庫操作」與「業務規則判斷」解耦。
+為了達到高可測試性 (TDD) 並保持 View 介面的輕量，Django 內部的服務邏輯應將「資料庫操作」與「業務規則判斷」解耦，實作於獨立的 `services.py` 中。
 
 ### 6.1 `WorkflowBuilder` 模組
 專責依據 SA 規則動態生成簽核關卡。
@@ -217,13 +218,23 @@ stateDiagram-v2
 *   **Transfer**：首關 `來源廠倉庫主管` (若來源為 TPE 則自動改為 `台北財務`)。若跨廠加掛 `目標廠倉庫主管` (若目標為 TPE 則豁免)。末關永遠加掛 `台北財務`。
 
 ### 6.2 樂觀鎖更新防禦 (`ConcurrencyService`)
-在執行 `Approve`, `Reject`, `Cancel`, `Submit` 時，Service 必須帶入前台傳入的 `version`：
+在執行 `Approve`, `Reject`, `Cancel`, `Submit` 時，Service 必須帶入前台傳入的 `version` 進行併發防護：
 ```python
-# FastAPI Service Code Pattern
-async def approve_document(doc_id: int, user_id: str, current_version: int):
+# Django Service Code Pattern
+from django.db.models import F
+from core.exceptions import ConcurrencyException
+
+def approve_document(doc_id: int, user_id: str, current_version: int):
     # 執行 SQL: UPDATE signoff_documents SET version = version + 1 WHERE id = :id AND version = :current_version
-    # 若 affected_rows == 0，拋出 ConcurrencyException (HTTP 409)
-    pass
+    updated_count = SignoffDocument.objects.filter(
+        id=doc_id, 
+        version=current_version
+    ).update(version=F('version') + 1)
+    
+    if updated_count == 0:
+        raise ConcurrencyException("Data has been modified by another user.")
+    
+    # 繼續執行狀態移轉邏輯...
 ```
 
 ### 6.3 代理人攔截器 (`DelegationInterceptor`)
