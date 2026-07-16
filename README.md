@@ -40,9 +40,10 @@ graph TB
     API -->|Django ORM| DB[(backend/db.sqlite3)]
     Django -->|Migrations| DB
 
-    API -->|Mock| ERP[ERP Service<br/>庫存檢核/扣除/釋放]
-    API -->|Mock| HR[HR Service<br/>組織架構查詢]
-    API -->|Celery| ACC[Accounting Service<br/>非同步帳務同步]
+    API -->|Mock| ERP[ERP Service<br/>庫存檢核]
+    API -->|Celery| ACC[外部系統同步<br/>ERP 扣庫與會計分錄]
+    
+    %% 備註：HR 系統資料已透過 Seed Data 預先載入 DB，無獨立即時 Mock 服務
 ```
 
 ---
