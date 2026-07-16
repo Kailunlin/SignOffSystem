@@ -69,6 +69,7 @@ SignOffSystem/
 
 ### 1. 安裝相依套件
 ```bash
+cd backend
 pip install -r requirements.txt
 ```
 
@@ -78,13 +79,13 @@ cd backend
 python manage.py runserver 8000
 ```
 *後台管理介面：`http://127.0.0.1:8000/admin`*
+*API 文件 (Swagger)：`http://127.0.0.1:8000/swagger/`*
 
 ### 3. 啟動 Celery Worker (外部同步與 SLA 背景任務)
 ```bash
 cd backend
 celery -A config worker --loglevel=info
 ```
-*API 文件 (Swagger)：`http://127.0.0.1:8000/swagger/`*
 
 ### 4. 開啟前端介面
 直接以瀏覽器開啟 `frontend/index.html`，或使用 `docker compose up --build` 透過 Nginx 開啟。
@@ -102,5 +103,6 @@ celery -A config worker --loglevel=info
 
 執行所有測試：
 ```bash
+cd backend
 pytest -v
 ```
