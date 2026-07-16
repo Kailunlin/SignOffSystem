@@ -24,7 +24,6 @@
 | [SD.md](docs/SD.md) | 系統設計規格書：微服務架構圖、資料表 Schema、ORM 映射 |
 | [DEV.md](docs/DEV.md) | 開發者指南：環境建置、啟動指令、資料庫異動流程 |
 | [SIT.md](docs/SIT.md) | 系統整合測試：各情境測試案例與驗收標準 |
-| [UAT.md](docs/UAT.md) | 使用者驗收測試：驗收清單與測試帳號 |
 | [USER_MANUAL.md](docs/USER_MANUAL.md) | 使用者操作手冊：各角色操作步驟與 FAQ |
 | [UI_UX.md](docs/UI_UX.md) | UI/UX 設計規格：色彩系統、元件規範、RWD 斷點 |
 | [MINDMAP.md](docs/MINDMAP.md) | 功能心智圖：全功能圖、簽核狀態機、決策樹 |
