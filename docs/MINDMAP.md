@@ -74,7 +74,7 @@ mindmap
         超過 N 天催辦通知
         超過 5 天緊急推播
       會計同步
-        BackgroundTasks 非同步
+        Celery 非同步
         失敗自動重試 3 次
         SYNC_FAILED 人工介入
     角色與權限
@@ -102,7 +102,7 @@ mindmap
         核心業務邏輯
       整合測試 API
         test_api.py
-        FastAPI TestClient
+        DRF APIClient
       系統整合測試
         SIT.md 案例
         前後端整合驗證

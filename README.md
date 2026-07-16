@@ -1,17 +1,17 @@
 # 三廠區物流暨物料簽核系統 (SignOff System)
 
-這是一套為跨廠區運作設計的**電子簽核工作流系統**，主要處理「物料清單 (BOM) 建立/變更」與「廠內/跨廠物料轉移」的簽核業務。系統具備微服務架構，利用 Django 管理基礎資料與 Schema，並由 FastAPI 提供高效能的非同步 REST API，前端則是原生的 Vanilla JS SPA。
+這是一套為跨廠區運作設計的**電子簽核工作流系統**，主要處理「物料清單 (BOM) 建立/變更」與「廠內/跨廠物料轉移」的簽核業務。系統以 Django + Django REST Framework 提供後端 API 與管理介面，搭配 Celery 處理外部同步與 SLA 背景任務，前端則是原生的 Vanilla JS SPA。
 
 ---
 
 ## ✨ 核心特色 (Key Features)
 
 * **動態簽核引擎 (WorkflowBuilder)**：自動依據「所屬廠區」、「物料風險」、「成本影響」以及「跨廠與否」動態產生簽核路徑 (如：生產主管 → 廠區主管 → 台北財務)。
-* **微服務解耦架構**：
-  * **Django (`admin_service`)**：負責資料庫 Schema (SQLite) 定義與後台介面管理。
-  * **FastAPI (`api_service`)**：負責高效能 API 處理、狀態機轉換與外部系統 Mock 通訊。
+* **Django/DRF 後端架構**：
+  * **Django (`backend`)**：負責資料庫 Schema、Django Admin、JWT 認證與系統設定。
+  * **Django REST Framework (`backend/signoff`)**：負責 REST API、狀態機轉換與外部系統 Mock 通訊。
 * **ERP 庫存生命週期管理**：提交時預占庫存 (Reserve)、核准時正式扣除 (Deduct)、撤回時釋放庫存 (Release)，杜絕死庫問題。
-* **非同步會計同步**：利用 FastAPI `BackgroundTasks` 在 API 回應後非同步執行，確保簽核操作秒回不卡頓。
+* **非同步會計同步**：利用 Celery 在 API 回應後非同步執行，確保簽核操作不被外部系統阻塞。
 * **併發安全**：支援**樂觀鎖 (Optimistic Locking)** 防止多人重複簽核，並具有庫存不足時的**自動駁回 (Auto-Reject)** 機制。
 
 ---
@@ -35,15 +35,15 @@
 
 ```mermaid
 graph TB
-    UI[前端 SPA<br/>Vanilla JS] -->|REST API| FastAPI[API Service<br/>FastAPI + SQLAlchemy]
-    UI -->|Admin| Django[Admin & DB Service<br/>Django ORM]
+    UI[前端 SPA<br/>Vanilla JS] -->|REST API| API[Django REST Framework]
+    UI -->|Admin| Django[Django Admin]
 
-    FastAPI -->|共用 SQLite| DB[(signoff.db)]
+    API -->|Django ORM| DB[(backend/db.sqlite3)]
     Django -->|Migrations| DB
 
-    FastAPI -->|Mock| ERP[ERP Service<br/>庫存檢核/扣除/釋放]
-    FastAPI -->|Mock| HR[HR Service<br/>組織架構查詢]
-    FastAPI -->|BackgroundTasks| ACC[Accounting Service<br/>非同步帳務同步]
+    API -->|Mock| ERP[ERP Service<br/>庫存檢核/扣除/釋放]
+    API -->|Mock| HR[HR Service<br/>組織架構查詢]
+    API -->|Celery| ACC[Accounting Service<br/>非同步帳務同步]
 ```
 
 ---
@@ -52,19 +52,15 @@ graph TB
 
 ```text
 SignOffSystem/
-├── admin_service/       # Django 微服務 (DB Migrations & Admin)
-│   └── core/            # 資料模型 (models.py) 與 Admin 設定
-├── api_service/         # FastAPI 微服務 (核心 API)
-│   └── signoff_system/  # api.py / services.py / domain.py / models.py
+├── backend/             # Django + DRF 後端
+│   ├── config/          # Django settings / urls / celery
+│   └── signoff/         # models / serializers / views / services / tasks
 ├── docs/                # 系統文件 (SA, SD, SIT, UAT, DEV, UI_UX, MINDMAP)
 ├── frontend/            # 前端 SPA (index.html / style.css / app.js)
-├── tests/               # 測試腳本
-│   ├── test_workflow.py # 單元測試：核心簽核業務邏輯
-│   ├── test_api.py      # 整合測試：FastAPI 端點 (TDD)
-│   └── test_django_models.py  # Django ORM 模型測試
+├── backend/tests/       # 服務層測試：簽核流程、狀態機、代理人、樂觀鎖
 ├── pytest.ini           # Pytest 設定 (pythonpath 整合)
 ├── requirements.txt     # Python 依賴清單
-└── signoff.db           # 共用 SQLite 資料庫
+└── backend/db.sqlite3   # 開發用 SQLite 資料庫
 ```
 
 ---
@@ -78,20 +74,20 @@ pip install -r requirements.txt
 
 ### 2. 啟動 Django Admin (資料與管理層)
 ```bash
-cd admin_service
-python manage.py runserver 8080
+cd backend
+python manage.py runserver 8000
 ```
-*後台管理介面：`http://127.0.0.1:8080/admin`*
+*後台管理介面：`http://127.0.0.1:8000/admin`*
 
-### 3. 啟動 FastAPI (核心 API 層)
+### 3. 啟動 Celery Worker (外部同步與 SLA 背景任務)
 ```bash
-# 於專案根目錄執行
-uvicorn signoff_system.api:app --reload --app-dir api_service
+cd backend
+celery -A config worker --loglevel=info
 ```
-*API 文件 (Swagger)：`http://127.0.0.1:8000/docs`*
+*API 文件 (Swagger)：`http://127.0.0.1:8000/swagger/`*
 
 ### 4. 開啟前端介面
-直接以瀏覽器開啟 `frontend/index.html` 即可使用完整系統。
+直接以瀏覽器開啟 `frontend/index.html`，或使用 `docker compose up --build` 透過 Nginx 開啟。
 
 ---
 
@@ -101,9 +97,8 @@ uvicorn signoff_system.api:app --reload --app-dir api_service
 
 | 測試類型 | 檔案 | 說明 |
 | :--- | :--- | :--- |
-| **單元測試** | `tests/test_workflow.py` | 核心簽核引擎、狀態機、業務規則 |
-| **整合測試** | `tests/test_api.py` | FastAPI 端點 E2E 測試 (TestClient) |
-| **Django 模型測試** | `tests/test_django_models.py` | ORM Schema 驗證 |
+| **服務層測試** | `backend/tests/test_services.py` | 核心簽核引擎、狀態機、代理人、樂觀鎖 |
+| **Django 系統檢查** | `python backend/manage.py check` | Django 設定與模型檢查 |
 
 執行所有測試：
 ```bash

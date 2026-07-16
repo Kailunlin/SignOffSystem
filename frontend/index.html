@@ -22,54 +22,34 @@
       <p class="login-subtitle">請選擇您的身分登入簽核系統</p>
 
       <div class="quick-login-grid">
-        <button class="quick-btn" onclick="quickLogin('EMP001')" id="btn-quick-emp">
+        <button class="quick-btn" onclick="quickLogin('EMP_TNN')" id="btn-quick-emp-tnn">
           <span class="quick-icon">👷</span>
-          <span class="quick-label">林員工</span>
+          <span class="quick-label">台南員工</span>
           <span class="quick-site">台南廠</span>
         </button>
-        <button class="quick-btn" onclick="quickLogin('EMP-KHH')" id="btn-quick-emp-khh">
+        <button class="quick-btn" onclick="quickLogin('EMP_KHH')" id="btn-quick-emp-khh">
           <span class="quick-icon">👷</span>
-          <span class="quick-label">陳員工</span>
+          <span class="quick-label">高雄員工</span>
           <span class="quick-site">高雄廠</span>
         </button>
-        <button class="quick-btn" onclick="quickLogin('PM-TNN')" id="btn-quick-pm-tnn">
+        <button class="quick-btn" onclick="quickLogin('MGR_TNN')" id="btn-quick-mgr-tnn">
           <span class="quick-icon">🏭</span>
-          <span class="quick-label">台南生產主管</span>
-          <span class="quick-site">台南廠</span>
+          <span class="quick-label">台南主管</span>
+          <span class="quick-site">台南廠 (生產)</span>
         </button>
-        <button class="quick-btn" onclick="quickLogin('PM-KHH')" id="btn-quick-pm-khh">
+        <button class="quick-btn" onclick="quickLogin('MGR_KHH')" id="btn-quick-mgr-khh">
           <span class="quick-icon">🏭</span>
-          <span class="quick-label">高雄生產主管</span>
-          <span class="quick-site">高雄廠</span>
+          <span class="quick-label">高雄主管</span>
+          <span class="quick-site">高雄廠 (倉庫)</span>
         </button>
-        <button class="quick-btn" onclick="quickLogin('WH-TNN')" id="btn-quick-wh-tnn">
-          <span class="quick-icon">📦</span>
-          <span class="quick-label">台南倉庫主管</span>
-          <span class="quick-site">台南廠</span>
-        </button>
-        <button class="quick-btn" onclick="quickLogin('WH-KHH')" id="btn-quick-wh-khh">
-          <span class="quick-icon">🚢</span>
-          <span class="quick-label">高雄倉庫主管</span>
-          <span class="quick-site">高雄廠</span>
-        </button>
-        <button class="quick-btn" onclick="quickLogin('GM-TNN')" id="btn-quick-gm-tnn">
-          <span class="quick-icon">🎖</span>
-          <span class="quick-label">台南廠區主管</span>
-          <span class="quick-site">台南廠</span>
-        </button>
-        <button class="quick-btn" onclick="quickLogin('GM-KHH')" id="btn-quick-gm-khh">
-          <span class="quick-icon">🎖</span>
-          <span class="quick-label">高雄廠區主管</span>
-          <span class="quick-site">高雄廠</span>
-        </button>
-        <button class="quick-btn" onclick="quickLogin('FIN-TPE')" id="btn-quick-fin">
+        <button class="quick-btn" onclick="quickLogin('EMP_TPE')" id="btn-quick-emp-tpe">
           <span class="quick-icon">💼</span>
-          <span class="quick-label">台北財務</span>
+          <span class="quick-label">台北員工</span>
           <span class="quick-site">總公司</span>
         </button>
-        <button class="quick-btn" onclick="quickLogin('ADMIN-TPE')" id="btn-quick-admin">
-          <span class="quick-icon">💻</span>
-          <span class="quick-label">系統管理員</span>
+        <button class="quick-btn" onclick="quickLogin('MGR_TPE')" id="btn-quick-mgr-tpe">
+          <span class="quick-icon">💰</span>
+          <span class="quick-label">台北財務主管</span>
           <span class="quick-site">總公司</span>
         </button>
       </div>
@@ -79,7 +59,7 @@
       <form id="login-form" onsubmit="handleLogin(event)">
         <div class="form-group">
           <label for="username-input">帳號</label>
-          <input type="text" id="username-input" placeholder="例如：EMP001" autocomplete="username" />
+          <input type="text" id="username-input" placeholder="例如：EMP_TNN" autocomplete="username" />
         </div>
         <button type="submit" class="btn btn-primary btn-full" id="btn-login-submit">
           <span>登入</span>

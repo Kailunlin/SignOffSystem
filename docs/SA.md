@@ -145,7 +145,7 @@ graph TD
     M --> E[廠區生產主管簽核]
     E -->|駁回| R
     E -->|通過| F{high_risk 或 <br>cost_impact_high == True ?}
-    F -->|否: 一般情境| H[進入 BackgroundTasks<br>非同步同步 ERP]
+    F -->|否: 一般情境| H[進入 Celery<br>非同步同步 ERP]
     F -->|是: 高風險/高成本| FS[廠區主管簽核]
     FS -->|駁回| R
     FS -->|通過| G[台北財務簽核]

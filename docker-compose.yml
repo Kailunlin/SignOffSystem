@@ -1,0 +1,51 @@
+services:
+  db:
+    image: redis:7-alpine
+    container_name: signoff_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  web:
+    build: 
+      context: ./backend
+    container_name: signoff_web
+    command: gunicorn --bind 0.0.0.0:8000 config.wsgi:application
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://db:6379/0
+      - CELERY_RESULT_BACKEND=redis://db:6379/0
+      - DJANGO_DEBUG=True
+    depends_on:
+      - db
+
+  celery:
+    build: 
+      context: ./backend
+    container_name: signoff_celery
+    command: celery -A config worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://db:6379/0
+      - CELERY_RESULT_BACKEND=redis://db:6379/0
+      - DJANGO_DEBUG=True
+    depends_on:
+      - db
+      - web
+
+  nginx:
+    image: nginx:alpine
+    container_name: signoff_nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - web
+
+volumes:
+  redis_data:

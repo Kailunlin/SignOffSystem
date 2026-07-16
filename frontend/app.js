@@ -2,7 +2,7 @@
    SignOff System — App Logic (Vanilla JS SPA)
    ═══════════════════════════════════════════════ */
 
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = '';
 
 /* ── State ── */
 let state = {
@@ -33,28 +33,34 @@ async function handleLogin(e) {
 async function doLogin(username) {
   const errEl = document.getElementById('login-error');
   errEl.classList.add('hidden');
+  
+  // Show loading state on all quick buttons and submit button
+  document.querySelectorAll('.quick-btn, .btn-primary').forEach(btn => btn.classList.add('loading'));
+
   try {
-    const form = new URLSearchParams();
-    form.append('username', username);
-    form.append('password', 'x');
-    const res = await fetch(`${API_BASE}/api/auth/login`, { method: 'POST', body: form });
-    if (!res.ok) { const d = await res.json(); showLoginError(d.detail || '登入失敗'); return; }
+    const res = await fetch(`${API_BASE}/api/token/`, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: username, password: 'password123' }) 
+    });
+    if (!res.ok) { 
+      const d = await res.json(); 
+      showLoginError(d.detail || '登入失敗'); 
+      document.querySelectorAll('.quick-btn, .btn-primary').forEach(btn => btn.classList.remove('loading'));
+      return; 
+    }
     const data = await res.json();
-    state.token = data.access_token;
+    state.token = data.access;
     state.currentUserId = username;
 
     // Map known users for display
     const userMap = {
-      'EMP001': { name: '林員工', position: '員工', site: '台南廠', site_code: 'TNN' },
-      'EMP-KHH': { name: '陳員工', position: '員工', site: '高雄廠', site_code: 'KHH' },
-      'PM-TNN': { name: '台南生產主管', position: '生產主管', site: '台南廠', site_code: 'TNN' },
-      'PM-KHH': { name: '高雄生產主管', position: '生產主管', site: '高雄廠', site_code: 'KHH' },
-      'GM-TNN': { name: '台南廠區主管', position: '廠區主管', site: '台南廠', site_code: 'TNN' },
-      'GM-KHH': { name: '高雄廠區主管', position: '廠區主管', site: '高雄廠', site_code: 'KHH' },
-      'WH-TNN': { name: '台南倉庫主管', position: '倉庫主管', site: '台南廠', site_code: 'TNN' },
-      'WH-KHH': { name: '高雄倉庫主管', position: '倉庫主管', site: '高雄廠', site_code: 'KHH' },
-      'FIN-TPE': { name: '台北財務', position: '台北財務', site: '總公司台北場', site_code: 'TPE' },
-      'ADMIN-TPE': { name: '系統管理員', position: '系統管理員', site: '總公司台北場', site_code: 'TPE' },
+      'EMP_TPE': { name: '台北員工', position: '財務專員', site: '台北廠', site_code: 'TPE' },
+      'EMP_TNN': { name: '台南員工', position: '生產專員', site: '台南廠', site_code: 'TNN' },
+      'EMP_KHH': { name: '高雄員工', position: '倉管專員', site: '高雄廠', site_code: 'KHH' },
+      'MGR_TPE': { name: '台北主管', position: '台北財務', site: '總公司', site_code: 'TPE' },
+      'MGR_TNN': { name: '台南主管', position: '生產主管', site: '台南廠', site_code: 'TNN' },
+      'MGR_KHH': { name: '高雄主管', position: '倉庫主管', site: '高雄廠', site_code: 'KHH' },
     };
     state.currentUser = userMap[username] || { name: username, position: '使用者', site: '', site_code: '' };
 
@@ -68,9 +74,14 @@ async function doLogin(username) {
 
     document.getElementById('page-login').classList.add('hidden');
     document.getElementById('app-shell').classList.remove('hidden');
+    
+    // Remove loading
+    document.querySelectorAll('.quick-btn, .btn-primary').forEach(btn => btn.classList.remove('loading'));
+
     navigate('dashboard');
   } catch (err) {
     showLoginError('連線錯誤，請確認後端伺服器是否已啟動。');
+    document.querySelectorAll('.quick-btn, .btn-primary').forEach(btn => btn.classList.remove('loading'));
   }
 }
 
@@ -131,6 +142,14 @@ async function apiPost(path, body = {}) {
   const d = await res.json();
   if (!res.ok) throw new Error(d.detail || `HTTP ${res.status}`);
   return d;
+}
+
+function docDetailPath(docType, id) {
+  return docType === 'BOM' ? `/api/boms/${id}/` : `/api/transfers/${id}/`;
+}
+
+function docActionPath(id, action) {
+  return `/api/documents/${id}/${action}/`;
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -220,18 +239,22 @@ function isDocVisibleToUser(doc, user) {
 }
 
 async function fetchAllDocs(type) {
-  const endpoint = type === 'bom' ? '/api/boms' : '/api/transfers';
+  const endpoint = type === 'bom' ? '/api/boms/' : '/api/transfers/';
   const data = await apiGet(endpoint);
   return data.filter(d => isDocVisibleToUser(d, state.currentUser));
 }
 
 function isPendingForMe(doc) {
   if (doc.status !== 'APPROVING' && doc.status !== 'SUBMITTED') return false;
-  const step = doc.current_step;
+  
+  // Find the current pending step
+  const step = doc.approval_steps ? doc.approval_steps.find(s => s.status === 'PENDING') : null;
   if (!step) return false;
+  
   const user = state.currentUser;
   if (!user) return false;
-  // Require both role and site_code to match (except when step has no site_code)
+  
+  // Require both role and site_code to match
   return user.position === step.role && (!step.site_code || user.site_code === step.site_code);
 }
 
@@ -257,7 +280,7 @@ async function loadPendingList() {
     pending.sort((a, b) => b.id - a.id);
 
     if (pending.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty-row">目前沒有待簽核的單據 🎉</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-row"><div class="empty-state-content"><div class="empty-state-icon">🎉</div><div class="empty-state-text">目前沒有待簽核的單據</div></div></td></tr>';
       return;
     }
     renderPendingTable(tbody, pending);
@@ -268,13 +291,13 @@ async function loadPendingList() {
 
 function renderPendingTable(tbody, docs) {
   tbody.innerHTML = docs.map(d => {
-    const step = d.current_step;
+    const step = d.approval_steps ? d.approval_steps.find(s => s.status === 'PENDING') : null;
     return `<tr>
       <td><span class="doc-id">#${d.id}</span></td>
       <td>${docTypeLabel(d.document_type)}</td>
-      <td><code>${d.material_id}</code></td>
-      <td>${d.quantity}</td>
-      <td>${d.created_by}</td>
+      <td><code>${d.document_type === 'BOM' ? (d.bom_detail?.items?.[0]?.material_id || '—') : (d.transfer_detail?.material_id || '—')}</code></td>
+      <td>${d.document_type === 'BOM' ? '—' : d.transfer_detail?.quantity || '—'}</td>
+      <td>${d.created_by_display?.name || d.created_by}</td>
       <td>${step ? `<span style="font-size:13px">${step.role}<br><span style="color:var(--text-muted);font-size:11px">${step.site_code}</span></span>` : '—'}</td>
       <td>${statusBadge(d.status)}</td>
       <td>
@@ -294,7 +317,7 @@ function renderPendingTable(tbody, docs) {
 function renderDocTable(tbodyId, docs, includeDetail = false) {
   const tbody = document.getElementById(tbodyId);
   if (docs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-row">暫無資料</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-row"><div class="empty-state-content"><div class="empty-state-icon">📄</div><div class="empty-state-text">暫無資料</div></div></td></tr>';
     return;
   }
   tbody.innerHTML = docs.map(d => {
@@ -302,8 +325,8 @@ function renderDocTable(tbodyId, docs, includeDetail = false) {
     return `<tr>
       <td><span class="doc-id">#${d.id}</span></td>
       <td>${docTypeLabel(d.document_type)}</td>
-      <td>${d.document_type === 'BOM' ? (d.items && d.items.length > 0 ? `<code>${d.items[0].material_id}</code>${d.items.length > 1 ? ` <span style="font-size:11px;color:var(--text-muted)">(+${d.items.length - 1}項)</span>` : ''}` : '—') : `<code>${d.material_id || '—'}</code>`}</td>
-      <td>${d.document_type === 'BOM' ? (d.items ? d.items.reduce((s,i) => s + i.quantity, 0) + ' (合計)' : '—') : (d.quantity || '—')}</td>
+      <td>${d.document_type === 'BOM' ? (d.bom_detail?.items?.length > 0 ? `<code>${d.bom_detail.items[0].material_id}</code>${d.bom_detail.items.length > 1 ? ` <span style="font-size:11px;color:var(--text-muted)">(+${d.bom_detail.items.length - 1}項)</span>` : ''}` : '—') : `<code>${d.transfer_detail?.material_id || '—'}</code>`}</td>
+      <td>${d.document_type === 'BOM' ? (d.bom_detail?.items ? d.bom_detail.items.reduce((s,i) => s + i.quantity, 0) + ' (合計)' : '—') : (d.transfer_detail?.quantity || '—')}</td>
       <td>${statusBadge(d.status)}</td>
       <td>${date}</td>
       <td>
@@ -405,15 +428,20 @@ async function submitBOMForm(e) {
     showToast('error', '請填寫所有必填欄位，數量須為正整數，且至少需要一項物料。'); return;
   }
 
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.classList.add('loading');
+
   try {
-    const doc = await apiPost('/api/boms', {
-      site_code: site, product_id: product, items,
-      high_risk: highRisk, cost_impact_high: costImpact,
-      reason, attachments,
+    const doc = await apiPost('/api/boms/', {
+      bom_detail: {
+        site_code: site, product_id: product, items,
+        high_risk: highRisk, cost_impact_high: costImpact,
+        reason,
+      },
     });
 
     if (state.bomAction === 'submit') {
-      await apiPost(`/api/boms/${doc.id}/submit`, { comment: '' });
+      await apiPost(docActionPath(doc.id, 'submit'), { comment: '', version: doc.version });
       showToast('success', `BOM #${doc.id} 已建立並提交簽核！`);
     } else {
       showToast('success', `BOM #${doc.id} 已儲存為草稿。`);
@@ -426,6 +454,8 @@ async function submitBOMForm(e) {
     navigate('dashboard');
   } catch (err) {
     showToast('error', `操作失敗：${err.message}`);
+  } finally {
+    submitBtn.classList.remove('loading');
   }
 }
 
@@ -465,13 +495,18 @@ async function submitTransferForm(e) {
     showToast('error', '請填寫所有必填欄位，數量須為正整數。'); return;
   }
 
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  submitBtn.classList.add('loading');
+
   try {
-    const doc = await apiPost('/api/transfers', {
-      source_site: srcSite, target_site: tgtSite, from_warehouse: fromWh,
-      to_warehouse: toWh, material_id: material, quantity, material_status: matStatus, urgent, reason,
+    const doc = await apiPost('/api/transfers/', {
+      transfer_detail: {
+        source_site: srcSite, target_site: tgtSite, from_warehouse: fromWh,
+        to_warehouse: toWh, material_id: material, quantity, urgent,
+      },
     });
     if (state.transferAction === 'submit') {
-      await apiPost(`/api/transfers/${doc.id}/submit`, { comment: '' });
+      await apiPost(docActionPath(doc.id, 'submit'), { comment: '', version: doc.version });
       showToast('success', `物料轉移 #${doc.id} 已建立並提交簽核！`);
     } else {
       showToast('success', `物料轉移 #${doc.id} 已儲存為草稿。`);
@@ -480,6 +515,8 @@ async function submitTransferForm(e) {
     navigate('dashboard');
   } catch (err) {
     showToast('error', `操作失敗：${err.message}`);
+  } finally {
+    submitBtn.classList.remove('loading');
   }
 }
 
@@ -506,7 +543,7 @@ async function doSearch() {
 
   tbody.innerHTML = '<tr><td colspan="8" class="empty-row">查詢中...</td></tr>';
   try {
-    const endpoint = type === 'bom' ? `/api/boms/${id}` : `/api/transfers/${id}`;
+    const endpoint = type === 'bom' ? `/api/boms/${id}/` : `/api/transfers/${id}/`;
     const doc = await apiGet(endpoint);
     if (!isDocVisibleToUser(doc, state.currentUser)) {
       throw new Error('Not visible');
@@ -519,7 +556,7 @@ async function doSearch() {
 
 function renderSearchTable(tbody, docs, type) {
   if (docs.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-row">查無資料</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-row"><div class="empty-state-content"><div class="empty-state-icon">🔍</div><div class="empty-state-text">查無資料</div></div></td></tr>';
     return;
   }
   const docType = type === 'bom' ? 'BOM' : 'MATERIAL_TRANSFER';
@@ -553,8 +590,8 @@ function renderSearchTable(tbody, docs, type) {
 ══════════════════════════════════════════════════════════════ */
 async function submitDoc(docType, id) {
   try {
-    const path = docType === 'BOM' ? `/api/boms/${id}/submit` : `/api/transfers/${id}/submit`;
-    await apiPost(path, { comment: '' });
+    const doc = await apiGet(docDetailPath(docType, id));
+    await apiPost(docActionPath(id, 'submit'), { comment: '', version: doc.version });
     showToast('success', `單據 #${id} 已提交簽核！`);
     loadDashboard();
   } catch (err) { showToast('error', `提交失敗：${err.message}`); }
@@ -563,8 +600,8 @@ async function submitDoc(docType, id) {
 async function cancelDoc(docType, id) {
   if (!confirm(`確定要撤回單據 #${id} 嗎？撤回後無法重新提交。`)) return;
   try {
-    const path = docType === 'BOM' ? `/api/boms/${id}/cancel` : `/api/transfers/${id}/cancel`;
-    await apiPost(path);
+    const doc = await apiGet(docDetailPath(docType, id));
+    await apiPost(docActionPath(id, 'cancel'), { version: doc.version });
     showToast('success', `單據 #${id} 已撤回。`);
     loadDashboard();
   } catch (err) { showToast('error', `撤回失敗：${err.message}`); }
@@ -573,8 +610,8 @@ async function cancelDoc(docType, id) {
 async function openReviseModal(docType, id) {
   if (!confirm(`確定要修改重提單據 #${id} 嗎？單據將恢復為草稿狀態。`)) return;
   try {
-    const path = docType === 'BOM' ? `/api/boms/${id}/revise` : `/api/transfers/${id}/revise`;
-    await apiPost(path);
+    const doc = await apiGet(docDetailPath(docType, id));
+    await apiPost(docActionPath(id, 'revise'), { version: doc.version });
     showToast('success', `單據 #${id} 已恢復為草稿，可重新提交。`);
     loadDashboard();
   } catch (err) { showToast('error', `操作失敗：${err.message}`); }
@@ -609,19 +646,28 @@ function closeActionModal() {
 }
 
 async function confirmAction() {
+  const confirmBtn = document.getElementById('btn-action-confirm');
+  confirmBtn.classList.add('loading');
+
   const { currentDocType, currentDocId, pendingActionType } = state;
   const comment = document.getElementById('action-comment-input').value.trim();
   if (pendingActionType === 'reject' && !comment) {
-    showToast('error', '駁回原因為必填。'); return;
+    showToast('error', '駁回原因為必填。'); 
+    confirmBtn.classList.remove('loading');
+    return;
   }
-  const isTransfer = currentDocType === 'MATERIAL_TRANSFER';
-  const base = isTransfer ? `/api/transfers/${currentDocId}` : `/api/boms/${currentDocId}`;
   try {
+    const base = docDetailPath(currentDocType, currentDocId);
+    
+    // 取得單據詳細資料以獲取 current version
+    const doc = await apiGet(base);
+    const version = doc.version;
+
     if (pendingActionType === 'approve') {
-      await apiPost(`${base}/approve`, { comment });
+      await apiPost(docActionPath(currentDocId, 'approve'), { comment, version });
       showToast('success', `單據 #${currentDocId} 已核准！`);
     } else {
-      await apiPost(`${base}/reject`, { reason: comment });
+      await apiPost(docActionPath(currentDocId, 'reject'), { comment: comment, version });
       showToast('success', `單據 #${currentDocId} 已駁回。`);
     }
     closeActionModal();
@@ -630,7 +676,11 @@ async function confirmAction() {
     if (document.getElementById('page-pending') && !document.getElementById('page-pending').classList.contains('hidden')) {
       loadPendingList();
     }
-  } catch (err) { showToast('error', `操作失敗：${err.message}`); }
+  } catch (err) { 
+    showToast('error', `操作失敗：${err.message}`); 
+  } finally {
+    confirmBtn.classList.remove('loading');
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -642,8 +692,8 @@ async function openDetailModal(docType, id) {
   try {
     const isTransfer = docType === 'MATERIAL_TRANSFER';
     const [doc, logs] = await Promise.all([
-      apiGet(isTransfer ? `/api/transfers/${id}` : `/api/boms/${id}`),
-      apiGet(`/api/documents/${id}/logs`),
+      apiGet(docDetailPath(docType, id)),
+      apiGet(`/api/documents/${id}/logs/`),
     ]);
     renderDetailModal(doc, logs);
     document.getElementById('detail-modal-overlay').classList.remove('hidden');
@@ -661,26 +711,24 @@ function renderDetailModal(doc, logs) {
   const metaItems = [
     { label: '單據類型', value: docTypeLabel(doc.document_type) },
     { label: '狀態', value: statusBadge(doc.status) },
-    { label: '申請人', value: doc.created_by },
-    ...(doc.product_id ? [{ label: '產品 ID', value: `<code>${doc.product_id}</code>` }] : []),
-    ...(doc.site_code ? [{ label: '廠區', value: doc.site_code }] : []),
+    { label: '申請人', value: doc.created_by_display?.name || doc.created_by },
+    ...(doc.bom_detail?.product_id ? [{ label: '產品 ID', value: `<code>${doc.bom_detail.product_id}</code>` }] : []),
+    ...(doc.bom_detail?.site_code ? [{ label: '廠區', value: doc.bom_detail.site_code }] : []),
     ...(isTransfer ? [
-      { label: '物料 ID', value: `<code>${doc.material_id || '—'}</code>` },
-      { label: '數量', value: doc.quantity ?? '—' },
-      { label: '來源廠', value: doc.source_site || '—' },
-      { label: '目標廠', value: doc.target_site || '—' },
-      { label: '是否急件', value: doc.urgent ? '<span style="color:var(--red);font-weight:600">✔ 急件</span>' : '否' },
+      { label: '物料 ID', value: `<code>${doc.transfer_detail?.material_id || '—'}</code>` },
+      { label: '數量', value: doc.transfer_detail?.quantity ?? '—' },
+      { label: '來源廠', value: doc.transfer_detail?.source_site || '—' },
+      { label: '目標廠', value: doc.transfer_detail?.target_site || '—' },
+      { label: '是否急件', value: doc.transfer_detail?.urgent ? '<span style="color:var(--red);font-weight:600">✔ 急件</span>' : '否' },
     ] : [
-      { label: '高風險', value: doc.high_risk ? '是' : '否' },
-      { label: '高成本影響', value: doc.cost_impact_high ? '是' : '否' },
+      { label: '高風險', value: doc.bom_detail?.high_risk ? '是' : '否' },
+      { label: '高成本影響', value: doc.bom_detail?.cost_impact_high ? '是' : '否' },
     ]),
-    ...(doc.reason ? [{ label: '原因', value: doc.reason }] : []),
-    ...(doc.attachments ? [{ label: '附件', value: `<a href="${doc.attachments}" target="_blank">${doc.attachments}</a>` }] : []),
+    ...(doc.bom_detail?.reason ? [{ label: '原因', value: doc.bom_detail.reason }] : []),
+    ...(doc.transfer_detail?.reason ? [{ label: '原因', value: doc.transfer_detail.reason }] : []),
     { label: '建立時間', value: doc.created_at ? new Date(doc.created_at).toLocaleString('zh-TW') : '—' },
     { label: '最後更新', value: doc.updated_at ? new Date(doc.updated_at).toLocaleString('zh-TW') : '—' },
-    { label: '核准人', value: doc.approved_by || '—' },
     ...(doc.sync_retries > 0 ? [{ label: '同步重試次數', value: `<span style="color:var(--red)">${doc.sync_retries} 次</span>` }] : []),
-    ...(doc.rejection_reason ? [{ label: '駁回原因', value: `<span style="color:var(--red)">${doc.rejection_reason}</span>` }] : []),
   ];
   document.getElementById('detail-meta').innerHTML = metaItems.map(i =>
     `<div class="meta-item"><span class="meta-label">${i.label}</span><span class="meta-value">${i.value}</span></div>`
@@ -688,9 +736,9 @@ function renderDetailModal(doc, logs) {
 
   // BOM 物料清單區塊
   const itemsSection = document.getElementById('detail-bom-items');
-  if (!isTransfer && doc.items && doc.items.length > 0) {
+  if (!isTransfer && doc.bom_detail?.items && doc.bom_detail.items.length > 0) {
     itemsSection.style.display = 'block';
-    document.getElementById('detail-bom-items-table').innerHTML = doc.items.map((item, idx) => `
+    document.getElementById('detail-bom-items-table').innerHTML = doc.bom_detail.items.map((item, idx) => `
       <tr>
         <td>${idx + 1}</td>
         <td><code>${item.material_id}</code></td>
@@ -706,8 +754,8 @@ function renderDetailModal(doc, logs) {
   const stepsEl = document.getElementById('detail-steps');
   if (doc.approval_steps && doc.approval_steps.length > 0) {
     stepsEl.innerHTML = doc.approval_steps.map(s => {
-      const cls = s.status === 'APPROVED' ? 'step-approved' : s.status === 'REJECTED' ? 'step-rejected' : s.status === 'SUBMITTED' ? 'step-pending' : 'step-waiting';
-      const icon = s.status === 'APPROVED' ? '✓' : s.status === 'REJECTED' ? '✗' : s.status === 'SUBMITTED' ? '⏳' : '○';
+      const cls = s.status === 'APPROVED' ? 'step-approved' : s.status === 'REJECTED' ? 'step-rejected' : s.status === 'PENDING' ? 'step-pending' : 'step-waiting';
+      const icon = s.status === 'APPROVED' ? '✓' : s.status === 'REJECTED' ? '✗' : s.status === 'PENDING' ? '⏳' : '○';
       const delegationBadge = s.delegated_from ? `<span style="font-size:10px;background:#fef3c7;color:#92400e;padding:1px 5px;border-radius:4px;">代理: ${s.delegated_from}</span>` : '';
       return `<div class="step-item ${cls}">
         <div class="step-num">${icon}</div>
@@ -736,7 +784,7 @@ function renderDetailModal(doc, logs) {
         <div class="log-dot"></div>
         <div class="log-content">
           <div class="log-action">${actionMap[l.action] || l.action}</div>
-          <div class="log-meta">操作者：${l.actor_id}・${new Date(l.created_at).toLocaleString('zh-TW')}</div>
+          <div class="log-meta">操作者：${l.actor_display?.name || l.actor_id}・${new Date(l.created_at).toLocaleString('zh-TW')}</div>
           ${l.comment ? `<div class="log-comment">"${l.comment}"</div>` : ''}
         </div>
       </div>`;
@@ -813,8 +861,8 @@ function statusBadge(status) {
 async function retrySyncDoc(docType, id) {
   if (!confirm(`確定要重試單據 #${id} 的會計同步嗎？`)) return;
   try {
-    const path = docType === 'BOM' ? `/api/boms/${id}/retry-sync` : `/api/transfers/${id}/retry-sync`;
-    await apiPost(path);
+    const doc = await apiGet(docDetailPath(docType, id));
+    await apiPost(docActionPath(id, 'retry-sync'), { version: doc.version });
     showToast('success', `單據 #${id} 會計同步重試已執行，請查看狀態。`);
     closeModal();
     loadDashboard();
@@ -840,8 +888,8 @@ async function saveDelegation() {
     showToast('error', '請填寫全部代理人資訊。'); return;
   }
   try {
-    await apiPost('/api/users/me/delegation', {
-      delegate_id: delegateId,
+    await apiPost('/api/users/me/delegation/', {
+      delegate: delegateId,
       start_at: new Date(startAt).toISOString(),
       end_at: new Date(endAt).toISOString(),
     });
@@ -853,7 +901,7 @@ async function saveDelegation() {
 async function clearDelegation() {
   if (!confirm('確定要清除代理人設定嗎？')) return;
   try {
-    const res = await fetch(`${API_BASE}/api/users/me/delegation`, {
+    const res = await fetch(`${API_BASE}/api/users/me/delegation/`, {
       method: 'DELETE',
       headers: { 'Authorization': `Bearer ${state.token}` },
     });
@@ -866,7 +914,7 @@ async function clearDelegation() {
 /* SA: 觸發 SLA 逸期檢查 */
 async function triggerSlaCheck() {
   try {
-    const data = await apiPost('/api/admin/trigger-sla-check?sla_days=3');
+    const data = await apiPost('/api/admin/trigger-sla-check/?sla_days=3');
     if (data.checked === 0) {
       showToast('info', '目前沒有逾期未簽核的單據。');
     } else {
