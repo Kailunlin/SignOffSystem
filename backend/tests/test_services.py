@@ -136,6 +136,44 @@ class TestWorkflowBuilder:
         assert steps[2].site_code == 'TPE'
         assert steps[2].role == '台北財務'
 
+    def test_transfer_same_site_generates_two_steps(self, db, tnn_employee):
+        """同廠轉移 (TNN->TNN) 應有 2 個關卡：TNN 倉庫主管 -> 台北財務。"""
+        doc = SignoffDocument.objects.create(
+            document_type=DocumentType.MATERIAL_TRANSFER,
+            status=DocumentStatus.DRAFT,
+            created_by=tnn_employee
+        )
+        TransferDetail.objects.create(
+            document=doc, source_site='TNN', target_site='TNN',
+            from_warehouse='TNN_WH_A', to_warehouse='TNN_WH_B',
+            material_id='MAT-001', quantity=50, urgent=False
+        )
+        steps = WorkflowBuilder.build_for_transfer(doc)
+        assert len(steps) == 2
+        assert steps[0].site_code == 'TNN'
+        assert steps[0].role == '倉庫主管'
+        assert steps[1].site_code == 'TPE'
+        assert steps[1].role == '台北財務'
+
+    def test_transfer_to_tpe_generates_two_steps(self, db, tnn_employee):
+        """跨廠轉移至總公司 (TNN->TPE) 應豁免目標廠倉庫主管，只有 2 個關卡：TNN 倉庫主管 -> 台北財務。"""
+        doc = SignoffDocument.objects.create(
+            document_type=DocumentType.MATERIAL_TRANSFER,
+            status=DocumentStatus.DRAFT,
+            created_by=tnn_employee
+        )
+        TransferDetail.objects.create(
+            document=doc, source_site='TNN', target_site='TPE',
+            from_warehouse='TNN_WH_A', to_warehouse='TPE_WH_A',
+            material_id='MAT-001', quantity=50, urgent=False
+        )
+        steps = WorkflowBuilder.build_for_transfer(doc)
+        assert len(steps) == 2
+        assert steps[0].site_code == 'TNN'
+        assert steps[0].role == '倉庫主管'
+        assert steps[1].site_code == 'TPE'
+        assert steps[1].role == '台北財務'
+
 
 # ==========================================
 # DocumentService State Machine Tests
