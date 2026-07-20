@@ -224,16 +224,16 @@ function isDocVisibleToUser(doc, user) {
   
   if (user.site_code === 'TPE') {
     if (doc.document_type === 'BOM') {
-      return doc.site_code === 'TPE' || doc.cost_impact_high || doc.high_risk;
+      return Boolean(doc.bom_detail?.cost_impact_high || doc.bom_detail?.high_risk);
     } else {
       return true;
     }
   } else {
     // TNN 或 KHH
     if (doc.document_type === 'BOM') {
-      return doc.site_code === user.site_code;
+      return doc.bom_detail?.site_code === user.site_code;
     } else {
-      return doc.source_site === user.site_code || doc.target_site === user.site_code;
+      return doc.transfer_detail?.source_site === user.site_code || doc.transfer_detail?.target_site === user.site_code;
     }
   }
 }
@@ -798,7 +798,7 @@ function renderDetailModal(doc, logs) {
   const isMine = doc.created_by === state.currentUserId;
   const isCancelable = (doc.status === 'SUBMITTED' || doc.status === 'APPROVING') && isMine;
   const isApprovable = isPendingForMe(doc);
-  const isSyncFailed = doc.status === 'APPROVED' || doc.status === 'SYNC_FAILED';
+  const isSyncFailed = doc.status === 'SYNC_FAILED';
   const canRetrySync = isSyncFailed && (state.currentUser?.position === '台北財務' || state.currentUser?.position === '系統管理員');
 
   footer.innerHTML = `

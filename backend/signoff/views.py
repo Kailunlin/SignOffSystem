@@ -3,6 +3,7 @@ Views (views.py)
 所有 API 端點的 View 實作，職責僅限於：接收請求 -> 驗證 -> 呼叫 Service -> 回傳結果。
 """
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import viewsets, status, generics
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -19,8 +20,44 @@ from .serializers import (
     CreateTransferDocumentSerializer, DocumentActionSerializer,
     ApprovalLogSerializer, DelegationSerializer
 )
-from .services import DocumentService
+from .services import DocumentService, is_admin_or_tpe_finance
 from .models import Delegation
+
+
+def visible_documents_for_user(queryset, user):
+    if user.is_staff or user.is_superuser:
+        return queryset
+
+    own_documents = Q(created_by=user)
+
+    if queryset.model is not SignoffDocument:
+        return queryset.none()
+
+    if user.site_code == 'TPE':
+        bom_visibility = Q(
+            document_type=DocumentType.BOM,
+            bom_detail__high_risk=True,
+        ) | Q(
+            document_type=DocumentType.BOM,
+            bom_detail__cost_impact_high=True,
+        )
+    else:
+        bom_visibility = Q(
+            document_type=DocumentType.BOM,
+            bom_detail__site_code=user.site_code,
+        )
+
+    transfer_visibility = Q(
+        document_type=DocumentType.MATERIAL_TRANSFER,
+        transfer_detail__source_site=user.site_code,
+    ) | Q(
+        document_type=DocumentType.MATERIAL_TRANSFER,
+        transfer_detail__target_site=user.site_code,
+    )
+    if user.site_code == 'TPE':
+        transfer_visibility = Q(document_type=DocumentType.MATERIAL_TRANSFER)
+
+    return queryset.filter(own_documents | bom_visibility | transfer_visibility).distinct()
 
 
 class BomViewSet(viewsets.GenericViewSet):
@@ -35,11 +72,12 @@ class BomViewSet(viewsets.GenericViewSet):
     serializer_class = SignoffDocumentListSerializer  # for drf-yasg schema generation
 
     def get_queryset(self):
-        return SignoffDocument.objects.filter(
+        queryset = SignoffDocument.objects.filter(
             document_type=DocumentType.BOM
         ).select_related('bom_detail', 'created_by').prefetch_related(
             'bom_detail__items', 'approval_steps__approver', 'logs__actor'
         )
+        return visible_documents_for_user(queryset, self.request.user)
 
     def list(self, request):
         queryset = self.get_queryset()
@@ -80,8 +118,10 @@ class BomViewSet(viewsets.GenericViewSet):
         except SignoffDocument.DoesNotExist:
             return Response({'detail': '找不到該單據。'}, status=status.HTTP_404_NOT_FOUND)
 
-        if doc.status not in ['DRAFT']:
-            return Response({'detail': '只有草稿狀態的單據可以修改。'}, status=status.HTTP_400_BAD_REQUEST)
+        if doc.created_by_id != request.user.id:
+            return Response({'detail': 'Only the applicant can update this document.'}, status=status.HTTP_403_FORBIDDEN)
+        if doc.status not in ['DRAFT', 'REJECTED']:
+            return Response({'detail': 'Only draft or rejected documents can be updated.'}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = CreateBomDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -111,11 +151,12 @@ class TransferViewSet(viewsets.GenericViewSet):
     serializer_class = SignoffDocumentListSerializer  # for drf-yasg schema generation
 
     def get_queryset(self):
-        return SignoffDocument.objects.filter(
+        queryset = SignoffDocument.objects.filter(
             document_type=DocumentType.MATERIAL_TRANSFER
         ).select_related('transfer_detail', 'created_by').prefetch_related(
             'approval_steps__approver', 'logs__actor'
         )
+        return visible_documents_for_user(queryset, self.request.user)
 
     def list(self, request):
         queryset = self.get_queryset()
@@ -152,8 +193,10 @@ class TransferViewSet(viewsets.GenericViewSet):
         except SignoffDocument.DoesNotExist:
             return Response({'detail': '找不到該單據。'}, status=status.HTTP_404_NOT_FOUND)
 
-        if doc.status not in ['DRAFT']:
-            return Response({'detail': '只有草稿狀態的單據可以修改。'}, status=status.HTTP_400_BAD_REQUEST)
+        if doc.created_by_id != request.user.id:
+            return Response({'detail': 'Only the applicant can update this document.'}, status=status.HTTP_403_FORBIDDEN)
+        if doc.status not in ['DRAFT', 'REJECTED']:
+            return Response({'detail': 'Only draft or rejected documents can be updated.'}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = CreateTransferDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -229,6 +272,9 @@ class DocumentLogsView(generics.ListAPIView):
 
     def get_queryset(self):
         pk = self.kwargs.get('pk')
+        visible_docs = visible_documents_for_user(SignoffDocument.objects.filter(id=pk), self.request.user)
+        if not visible_docs.exists():
+            return ApprovalLog.objects.none()
         return ApprovalLog.objects.filter(
             document_id=pk
         ).select_related('actor').order_by('created_at')
@@ -242,11 +288,8 @@ class MyDelegationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = DelegationSerializer(data=request.data)
+        serializer = DelegationSerializer(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
-        # 確保只能設定自己的代理
-        if serializer.validated_data['delegator'] != request.user:
-            return Response({'detail': '只能設定自己的代理人。'}, status=status.HTTP_403_FORBIDDEN)
         Delegation.objects.update_or_create(
             delegator=request.user,
             defaults={
@@ -274,6 +317,9 @@ class TriggerSlaCheckView(APIView):
     def post(self, request):
         from django.utils import timezone
         from .tasks import check_sla_overdue
+
+        if not is_admin_or_tpe_finance(request.user):
+            return Response({'detail': 'Only TPE finance or system administrators can trigger SLA checks.'}, status=status.HTTP_403_FORBIDDEN)
 
         sla_days = int(request.query_params.get('sla_days', 3))
         threshold = timezone.now() - timezone.timedelta(days=sla_days)

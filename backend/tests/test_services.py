@@ -9,6 +9,8 @@ tests/test_services.py
 import pytest
 from django.utils import timezone
 from datetime import timedelta
+from unittest.mock import patch
+from rest_framework.test import APIClient
 
 from signoff.models import (
     User, SignoffDocument, BomDetail, BomItemDetail,
@@ -256,6 +258,18 @@ class TestDocumentServiceStateMachine:
         with pytest.raises(PermissionDeniedException):
             DocumentService.approve(doc, wrong_site_manager, version=doc.version)
 
+    def test_wrong_role_cannot_reject_current_step(self, bom_doc_tnn, tnn_employee):
+        doc = bom_doc_tnn
+        DocumentService.submit(doc, tnn_employee, version=doc.version)
+        doc.refresh_from_db()
+
+        wrong_user = User.objects.create_user(
+            user_id='WH_TNN_REJECT', name='台南倉庫主管', position='倉庫主管', site_code='TNN', password='pw'
+        )
+
+        with pytest.raises(PermissionDeniedException):
+            DocumentService.reject(doc, wrong_user, version=doc.version, comment='不是我的待簽單')
+
     def test_transfer_inventory_shortage_auto_rejects(self, db, tnn_employee):
         """物料轉移提交時若 ERP 庫存不足，應自動駁回並寫入 AUTO_REJECT log。"""
         doc = SignoffDocument.objects.create(
@@ -326,6 +340,87 @@ class TestDelegation:
         """無代理設定時，應回傳主管本人。"""
         result = DelegationService.get_effective_approver(tnn_manager)
         assert result == tnn_manager
+
+
+class TestApiAuthorization:
+
+    def test_bom_list_filters_by_visible_site(self, db, tnn_employee, tnn_manager):
+        khh_employee = User.objects.create_user(
+            user_id='EMP_KHH_API', name='高雄申請人', position='申請人', site_code='KHH', password='pw'
+        )
+
+        tnn_doc = SignoffDocument.objects.create(
+            document_type=DocumentType.BOM,
+            status=DocumentStatus.DRAFT,
+            created_by=tnn_employee
+        )
+        BomDetail.objects.create(
+            document=tnn_doc, site_code='TNN', product_id='PRD-TNN',
+            high_risk=False, cost_impact_high=False
+        )
+
+        khh_doc = SignoffDocument.objects.create(
+            document_type=DocumentType.BOM,
+            status=DocumentStatus.DRAFT,
+            created_by=khh_employee
+        )
+        BomDetail.objects.create(
+            document=khh_doc, site_code='KHH', product_id='PRD-KHH',
+            high_risk=False, cost_impact_high=False
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=tnn_manager)
+        response = client.get('/api/boms/')
+
+        assert response.status_code == 200
+        ids = {item['id'] for item in response.data}
+        assert tnn_doc.id in ids
+        assert khh_doc.id not in ids
+
+    def test_delegation_api_uses_current_user_as_delegator(self, db, tnn_manager, khh_manager):
+        client = APIClient()
+        client.force_authenticate(user=tnn_manager)
+
+        response = client.post('/api/users/me/delegation/', {
+            'delegate': khh_manager.user_id,
+            'start_at': (timezone.now() - timedelta(hours=1)).isoformat(),
+            'end_at': (timezone.now() + timedelta(hours=1)).isoformat(),
+        }, format='json')
+
+        assert response.status_code == 200
+        delegation = Delegation.objects.get(delegator=tnn_manager)
+        assert delegation.delegate == khh_manager
+
+    def test_non_tpe_finance_cannot_retry_sync(self, db, tnn_employee, tnn_manager):
+        doc = SignoffDocument.objects.create(
+            document_type=DocumentType.BOM,
+            status=DocumentStatus.SYNC_FAILED,
+            created_by=tnn_employee
+        )
+
+        with pytest.raises(PermissionDeniedException):
+            DocumentService.retry_sync(doc, tnn_manager, version=doc.version)
+
+    def test_tpe_finance_can_retry_sync(self, db, tnn_employee, tpe_manager):
+        doc = SignoffDocument.objects.create(
+            document_type=DocumentType.BOM,
+            status=DocumentStatus.SYNC_FAILED,
+            created_by=tnn_employee
+        )
+
+        with patch('signoff.tasks.sync_document_to_external.delay') as delay:
+            DocumentService.retry_sync(doc, tpe_manager, version=doc.version)
+
+        delay.assert_called_once_with(doc.id)
+
+    def test_non_tpe_finance_cannot_trigger_sla_check(self, db, tnn_manager):
+        client = APIClient()
+        client.force_authenticate(user=tnn_manager)
+
+        response = client.post('/api/admin/trigger-sla-check/?sla_days=3')
+
+        assert response.status_code == 403
 
     def test_expired_delegation_is_ignored(self, db, tnn_manager, khh_manager):
         """已過期的代理設定不應生效。"""

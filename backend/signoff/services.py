@@ -14,6 +14,17 @@ from .models import (
 from .exceptions import ConcurrencyException, InvalidTransitionException, PermissionDeniedException
 
 
+TPE_FINANCE_KEYWORD = '財務'
+
+
+def is_admin_or_tpe_finance(user: User) -> bool:
+    return bool(
+        getattr(user, 'is_staff', False)
+        or getattr(user, 'is_superuser', False)
+        or (user.site_code == 'TPE' and TPE_FINANCE_KEYWORD in user.position)
+    )
+
+
 # ==========================================
 # Delegation Service
 # ==========================================
@@ -302,6 +313,24 @@ class DocumentService:
         """主管駁回單據。"""
         DocumentService._check_transition(document, 'reject')
 
+        if not comment:
+            raise InvalidTransitionException("Reject requires a comment.")
+
+        current_step = ApprovalStep.objects.filter(
+            document=document, status=ApprovalStepStatus.PENDING
+        ).order_by('sequence').first()
+        if current_step is None:
+            raise InvalidTransitionException("No pending approval step.")
+
+        delegator = _validate_step_permission(current_step, actor)
+        delegated_from_id = delegator.user_id if delegator else None
+
+        current_step.approver = actor
+        current_step.comment = comment
+        current_step.delegated_from = delegated_from_id
+        current_step.status = ApprovalStepStatus.REJECTED
+        current_step.save()
+
         # 將所有 PENDING 關卡標記為 REJECTED
         ApprovalStep.objects.filter(
             document=document, status=ApprovalStepStatus.PENDING
@@ -357,6 +386,9 @@ class DocumentService:
     def retry_sync(document: SignoffDocument, actor: User, version: int):
         """手動重試外部系統同步 (SYNC_FAILED)。"""
         DocumentService._check_transition(document, 'retry_sync')
+
+        if not is_admin_or_tpe_finance(actor):
+            raise PermissionDeniedException("Only TPE finance or system administrators can retry external sync.")
 
         # 重置重試次數，觸發 Celery 任務（Celery 任務將在 tasks.py 中實作）
         updated = SignoffDocument.objects.filter(

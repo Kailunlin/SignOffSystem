@@ -21,6 +21,11 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class DelegationSerializer(serializers.ModelSerializer):
+    delegator = serializers.PrimaryKeyRelatedField(read_only=True)
+    delegate = serializers.SlugRelatedField(
+        slug_field='user_id',
+        queryset=User.objects.all(),
+    )
     delegator_display = UserSerializer(source='delegator', read_only=True)
     delegate_display = UserSerializer(source='delegate', read_only=True)
 
@@ -29,7 +34,9 @@ class DelegationSerializer(serializers.ModelSerializer):
         fields = ['id', 'delegator', 'delegate', 'delegator_display', 'delegate_display', 'start_at', 'end_at']
 
     def validate(self, data):
-        if data['delegator'] == data['delegate']:
+        request = self.context.get('request')
+        delegator = request.user if request else data.get('delegator')
+        if delegator == data['delegate']:
             raise serializers.ValidationError("代理人不能是主管本人。")
         if data['start_at'] >= data['end_at']:
             raise serializers.ValidationError("代理結束時間必須晚於起始時間。")

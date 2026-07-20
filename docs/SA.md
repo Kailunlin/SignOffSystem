@@ -549,7 +549,7 @@ POST /api/erp/bom/sync
 3. **現行手動排程觸發點**：
    目前階段系統提供特權管理端點，允許系統管理員手動呼叫執行：
 ```http
-POST /api/admin/trigger-sla-check?sla_days=3
+POST /api/admin/trigger-sla-check/?sla_days=3
 ```
 
 ## 11. 網頁功能需求
@@ -711,7 +711,7 @@ graph TD
 
 | 功能 | 說明 |
 | --- | --- |
-| SLA 催辦排程觸發 | 在尚未全面掛載 Cron Job 自動排程的現行過渡階段，提供後台手動特權觸發點。點擊按鈕後，前端發送 `POST /api/admin/trigger-sla-check?sla_days=3`，強制後端立刻掃描並補發逾期催辦信與 Webhook 升級呈報。 |
+| SLA 催辦排程觸發 | 在尚未全面掛載 Cron Job 自動排程的現行過渡階段，提供後台手動特權觸發點。點擊按鈕後，前端發送 `POST /api/admin/trigger-sla-check/?sla_days=3`，強制後端立刻掃描並補發逾期催辦信與 Webhook 升級呈報。 |
 
 ---
 
@@ -864,39 +864,39 @@ graph TD
 
 | HTTP 方法 | 路由路徑 (Route) | 動作說明 (Description) | 權限約束 (SLA / RBAC) |
 | :--- | :--- | :--- | :--- |
-| **GET** | `/api/boms` | 分頁列出 BOM 單摘要。支援依 `status`、`site_code` 篩選。 | 自動套用 `isDocVisibleToUser` 權限過濾 |
-| **POST** | `/api/boms` | 建立全新 BOM 單明細。由 Payload 參數決定直接提交或暫存草稿。 | **限 TNN / KHH 廠區發起**（TPE 呼叫則回傳 HTTP 400） |
-| **GET** | `/api/boms/{id}` | 取得指定 BOM 單的完整主檔與物料明細清單。 | 依廠區與自己建立進行隔離校驗 |
-| **PUT** | `/api/boms/{id}` | 更新處於 `DRAFT` 或 `REJECTED`（修改重提）狀態的 BOM 欄位。 | 僅限單據建立人（申請人）操作 |
+| **GET** | `/api/boms/` | 分頁列出 BOM 單摘要。支援依 `status`、`site_code` 篩選。 | 自動套用 `isDocVisibleToUser` 權限過濾 |
+| **POST** | `/api/boms/` | 建立全新 BOM 單明細。由 Payload 參數決定直接提交或暫存草稿。 | **限 TNN / KHH 廠區發起**（TPE 呼叫則回傳 HTTP 400） |
+| **GET** | `/api/boms/{id}/` | 取得指定 BOM 單的完整主檔與物料明細清單。 | 依廠區與自己建立進行隔離校驗 |
+| **PUT** | `/api/boms/{id}/` | 更新處於 `DRAFT` 或 `REJECTED`（修改重提）狀態的 BOM 欄位。 | 僅限單據建立人（申請人）操作 |
 
 ### 17.2 物料轉移專屬單據端點
 
 | HTTP 方法 | 路由路徑 (Route) | 動作說明 (Description) | 權限約束 (SLA / RBAC) |
 | :--- | :--- | :--- | :--- |
-| **GET** | `/api/transfers` | 分頁列出物料轉移單。支援依 `status`、`source_site` 篩選。| 自動套用 `isDocVisibleToUser` 權限過濾 |
-| **POST** | `/api/transfers` | 建立物料轉移單明細。即時觸發 ERP 可用庫存量校驗。 | 支援 TNN / KHH / TPE 三廠區發起 |
-| **GET** | `/api/transfers/{id}`| 取得指定物料轉移單的完整調撥儲位、數量與急件標記。 | 依廠區與自己建立進行隔離校驗 |
-| **PUT** | `/api/transfers/{id}`| 更新處於 `DRAFT` 或 `REJECTED` 狀態的物料轉移單欄位。 | 僅限單據建立人（申請人）操作 |
+| **GET** | `/api/transfers/` | 分頁列出物料轉移單。支援依 `status`、`source_site` 篩選。| 自動套用 `isDocVisibleToUser` 權限過濾 |
+| **POST** | `/api/transfers/` | 建立物料轉移單明細。即時觸發 ERP 可用庫存量校驗。 | 支援 TNN / KHH / TPE 三廠區發起 |
+| **GET** | `/api/transfers/{id}/`| 取得指定物料轉移單的完整調撥儲位、數量與急件標記。 | 依廠區與自己建立進行隔離校驗 |
+| **PUT** | `/api/transfers/{id}/`| 更新處於 `DRAFT` 或 `REJECTED` 狀態的物料轉移單欄位。 | 僅限單據建立人（申請人）操作 |
 
 ### 17.3 通用簽核工作流控制端點 (Workflow Core Engine)
 *註：操作之 {id} 為父表 SIGNOFF_DOCUMENT.id，由後端統一執行樂觀鎖。*
 
 | HTTP 方法 | 路由路徑 (Route) | 動作說明 (Description) | 權限與狀態機約束 (Constraint) |
 | :--- | :--- | :--- | :--- |
-| **POST** | `/api/documents/{id}/submit` | 將 DRAFT 草稿正式提交，觸發動態產生簽核路徑。 | 限建立人操作。狀態：DRAFT -> APPROVING |
-| **POST** | `/api/documents/{id}/approve`| 當前步驟簽核主管（或有效代理人）執行「核准同意」。 | 限目前待辦主管。若無下關則觸發 Celery 背景同步。 |
-| **POST** | `/api/documents/{id}/reject` | 當前步驟簽核主管（或有效代理人）執行「核准駁回」。 | 限目前待辦主管。Payload 之 comment 原因為必填。 |
-| **POST** | `/api/documents/{id}/cancel` | 申請人於主管審畢前，主動作廢並「撤回」工作流。 | 限建立人操作。狀態：APPROVING -> CANCELED |
-| **POST** | `/api/documents/{id}/revise` | 申請人針對被駁回單據點擊「修改重提」，重置路徑。| 限建立人操作。狀態：REJECTED -> DRAFT（欄位解鎖） |
-| **POST** | `/api/documents/{id}/retry-sync`| 手動強制重新向外部系統發起非同步同步（Sync_Retry）。| 限台北財務或系統管理員。狀態必須為 SYNC_FAILED |
+| **POST** | `/api/documents/{id}/submit/` | 將 DRAFT 草稿正式提交，觸發動態產生簽核路徑。 | 限建立人操作。狀態：DRAFT -> APPROVING |
+| **POST** | `/api/documents/{id}/approve/`| 當前步驟簽核主管（或有效代理人）執行「核准同意」。 | 限目前待辦主管。若無下關則觸發 Celery 背景同步。 |
+| **POST** | `/api/documents/{id}/reject/` | 當前步驟簽核主管（或有效代理人）執行「核准駁回」。 | 限目前待辦主管。Payload 之 comment 原因為必填。 |
+| **POST** | `/api/documents/{id}/cancel/` | 申請人於主管審畢前，主動作廢並「撤回」工作流。 | 限建立人操作。狀態：APPROVING -> CANCELED |
+| **POST** | `/api/documents/{id}/revise/` | 申請人針對被駁回單據點擊「修改重提」，重置路徑。| 限建立人操作。狀態：REJECTED -> DRAFT（欄位解鎖） |
+| **POST** | `/api/documents/{id}/retry-sync/`| 手動強制重新向外部系統發起非同步同步（Sync_Retry）。| 限台北財務或系統管理員。狀態必須為 SYNC_FAILED |
 
 ### 17.4 系統基礎設施與行政管理端點
 
 | HTTP 方法 | 路由路徑 (Route) | 動作說明 (Description) | 備註 (Remarks) |
 | :--- | :--- | :--- | :--- |
-| **POST** | `/api/auth/login` | 提交企業 SSO 憑證或帳密，驗證成功回傳 JWT Bearer Token。| 全域開放（匿名端點） |
-| **GET** | `/api/documents/{id}/logs` | 取得指定單據之完整唯讀審計操作歷程（`APPROVAL_LOG`）。 | 全角色開放（唯讀，依可視範圍隔離） |
-| **POST** | `/api/users/me/delegation`| 主管自主規劃與維護自身的「動態代理人機制」。 | Payload 含 `delegate_id`, `start_at`, `end_at` |
-| **DELETE** | `/api/users/me/delegation`| 主管提前「手動清除」或撤銷目前的代理人設定。 | 清除後立即收回代理人之待辦繼承權 |
-| **POST** | `/api/admin/trigger-sla-check`| 手動特權觸發 SLA 停滯排程掃描（預設 `?sla_days=3`）。 | **嚴格限系統管理員與台北場管理角色** |
-| **GET** | `/api/admin/external/sync-errors`| 查詢目前卡在 `SYNC_FAILED` 的異常單據與 Exception 堆疊歷程。| **限台北財務與系統管理員**稽核 debug 使用 |
+| **POST** | `/api/token/` | 提交帳密，驗證成功回傳 JWT Bearer Token。| 全域開放（匿名端點） |
+| **POST** | `/api/token/refresh/` | 以 refresh token 換發新的 access token。 | 全域開放（匿名端點） |
+| **GET** | `/api/documents/{id}/logs/` | 取得指定單據之完整唯讀審計操作歷程（`APPROVAL_LOG`）。 | 全角色開放（唯讀，依可視範圍隔離） |
+| **POST** | `/api/users/me/delegation/`| 主管自主規劃與維護自身的「動態代理人機制」。 | Payload 含 `delegate`, `start_at`, `end_at`，`delegate` 為代理人 `user_id` |
+| **DELETE** | `/api/users/me/delegation/`| 主管提前「手動清除」或撤銷目前的代理人設定。 | 清除後立即收回代理人之待辦繼承權 |
+| **POST** | `/api/admin/trigger-sla-check/`| 手動特權觸發 SLA 停滯排程掃描（預設 `?sla_days=3`）。 | **嚴格限系統管理員與台北場管理角色** |

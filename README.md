@@ -26,7 +26,6 @@
 | [SIT.md](docs/SIT.md) | 系統整合測試：各情境測試案例與驗收標準 |
 | [USER_MANUAL.md](docs/USER_MANUAL.md) | 使用者操作手冊：各角色操作步驟與 FAQ |
 | [UI_UX.md](docs/UI_UX.md) | UI/UX 設計規格：色彩系統、元件規範、RWD 斷點 |
-| [MINDMAP.md](docs/MINDMAP.md) | 功能心智圖：全功能圖、簽核狀態機、決策樹 |
 
 ---
 
@@ -55,7 +54,7 @@ SignOffSystem/
 ├── backend/             # Django + DRF 後端
 │   ├── config/          # Django settings / urls / celery
 │   └── signoff/         # models / serializers / views / services / tasks
-├── docs/                # 系統文件 (SA, SD, SIT, UAT, DEV, UI_UX, MINDMAP)
+├── docs/                # 系統文件 (SA, SD, SIT, DEV, UI_UX, USER_MANUAL)
 ├── frontend/            # 前端 SPA (index.html / style.css / app.js)
 ├── backend/tests/       # 服務層測試：簽核流程、狀態機、代理人、樂觀鎖
 ├── pytest.ini           # Pytest 設定 (pythonpath 整合)
